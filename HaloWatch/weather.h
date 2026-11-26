@@ -475,14 +475,15 @@ static void wx_update() {
 }
 
 static void wx_task(void *) {
-  uint32_t last_try = 0, seen_cfg = cfg_ver;
+  uint32_t last_try = 0;
   vTaskDelay(pdMS_TO_TICKS(1500));  // let Wi-Fi come up with the clock first
   for (;;) {
     const uint32_t now = millis(), every = (uint32_t)cfg.wx_every * 60000;
-    const bool cfg_changed = cfg_ver != seen_cfg;
     const bool due = !last_try || (wx_updated_ms ? now - last_try > every : now - last_try > 120000);
-    if (due || wx_cmd_update || cfg_changed) {
-      seen_cfg = cfg_ver, wx_cmd_update = false, last_try = now;
+    // Not on any setting: a face or a volume change would turn Wi-Fi on (and pause Bluetooth) for nothing. The wx_
+    // settings ask for an update themselves (status.h: wx_cmd_update)
+    if (due || wx_cmd_update) {
+      wx_cmd_update = false, last_try = now;
       wx_update();
     }
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10000));

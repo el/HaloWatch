@@ -113,7 +113,13 @@ static void net_apply_tz() {  // the `tz` setting, or the auto offset, or UTC
   setenv("TZ", tz, 1), tzset();
 }
 
-static void net_set_auto_offset(int32_t off_s) {  // from the weather (Open-Meteo's utc_offset_seconds)
+static volatile bool net_phone_tz;  // the iPhone told the offset (ancs.h, CTS): the weather's is ignored then
+
+// The "auto" time zone's offset: from the weather (Open-Meteo's utc_offset_seconds, the first city), or from the
+// iPhone (where it is, with DST) — the phone wins
+static void net_set_auto_offset(int32_t off_s, bool phone = false) {
+  if (phone) net_phone_tz = true;
+  else if (net_phone_tz) return;
   if (off_s == net_auto_off) return;
   net_auto_off = off_s;
   if (!cfg.tz[0]) net_apply_tz(), LOG("time zone: auto, UTC%+.1f h\n", off_s / 3600.0f);
@@ -140,6 +146,7 @@ static void net_task(void *) {
     }
     net_reconnect = false;
     const bool want = net_users > 0 || net_poked || now - net_last_ms < (uint32_t)cfg.net_idle * 1000;
+    const bool poked = net_poked;  // for the log: why Wi-Fi comes on
     switch (net_state) {
       case NET_OFF:
       case NET_FAILED:
@@ -163,7 +170,8 @@ static void net_task(void *) {
         WiFi.mode(WIFI_STA);
         WiFi.setSleep(false);  // streaming audio: no modem sleep (the radio is on only while it is used anyway)
         WiFi.begin(ssid, pass);
-        LOG("wifi: connecting to %s\n", ssid);
+        LOG("wifi: connecting to %s (users %d, poked %d, last use %lu ms ago)\n", ssid, net_users, (int)poked,
+            (unsigned long)(now - net_last_ms));
         net_state = NET_CONNECTING, since = now;
         break;
       case NET_CONNECTING:

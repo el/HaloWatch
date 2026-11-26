@@ -48,6 +48,7 @@ static NotifStore &nt = psram_new<NotifStore>();
 static portMUX_TYPE nt_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile uint32_t nt_ver;       // bumped on every change: the screen takes a new copy
 static volatile uint32_t nt_new_ver;   // bumped by a notification worth a banner
+static volatile int nt_unread;         // such ones since the Notifications screen was opened (the face's dot)
 static Notif &nt_banner = psram_new<Notif>();  // that notification (under nt_mux)
 
 enum : uint8_t { BT_OFF, BT_ADV, BT_CONN, BT_SECURE, BT_READY, BT_NO_ANCS, BT_PAUSED };
@@ -87,6 +88,7 @@ static int an_len;
 
 static void an_next();
 static void am_begin();  // AMS (below), once ANCS is set up
+static void cts_begin();  // CTS (below), once AMS is
 
 static const char *nt_app_name(const char *id, char *out, size_t n) {  // a bundle ID -> a short name
   static const char *const MAP[][2] = {
@@ -123,7 +125,7 @@ static void an_store(const char *app_id, const char *title, const char *msg, con
   nt.head = (nt.head + 1) % NT_N;
   if (nt.count < NT_N) nt.count++;
   nt_ver++;
-  if (!quiet) nt_banner = e, nt_new_ver++;
+  if (!quiet) nt_banner = e, nt_new_ver++, nt_unread++;
   portEXIT_CRITICAL(&nt_mux);
 }
 
@@ -302,6 +304,7 @@ static int am_registered(uint16_t, const ble_gatt_error *e, ble_gatt_attr *, voi
     md.valid = true, md_ver++;
     portEXIT_CRITICAL(&md_mux);
     LOG("bluetooth: AMS ready\n");
+    cts_begin();  // then the time
   }
   return 0;
 }
@@ -335,10 +338,14 @@ static int am_chr(uint16_t, const ble_gatt_error *e, const ble_gatt_chr *c, void
 }
 
 static int am_svc(uint16_t, const ble_gatt_error *e, const ble_gatt_svc *s, void *) {
+  static bool found;
   if (e->status == 0) {
-    am_start = s->start_handle, am_end = s->end_handle;
+    found = true, am_start = s->start_handle, am_end = s->end_handle;
     ble_gattc_disc_all_chrs(bt_conn, am_start, am_end, am_chr, nullptr);
+  } else if (e->status == BLE_HS_EDONE && !found) {
+    cts_begin();  // no AMS: the time anyway
   }
+  if (e->status) found = false;
   return 0;
 }
 
@@ -358,18 +365,80 @@ static bool ams_cmd(uint8_t c) {  // the Music screen's buttons (any task: NimBL
   return ble_gattc_write_flat(bt_conn, am_rc, &c, 1, nullptr, nullptr) == 0;
 }
 
+// ---------- Current Time Service (CTS): the clock and the time zone from the iPhone (no Wi-Fi needed) ----------
+// Local Time Information (0x2A0F): the zone in 15-minute steps and the DST offset; Current Time (0x2A2B): the
+// iPhone's local date and time. Together: UTC exactly, and the "auto" time zone where the phone is (net.h)
+static uint16_t ct_time, ct_info;
+static int8_t ct_zone = -128;  // 15-minute steps; −128 — not known
+static uint8_t ct_dst = 255;   // 15-minute steps; 255 — not known
+
+static int64_t ct_days(int y, int m, int d) {  // days since 1970-01-01 (Howard Hinnant's days_from_civil)
+  y -= m <= 2;
+  const int era = (y >= 0 ? y : y - 399) / 400, yoe = y - era * 400;
+  const int doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1, doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return (int64_t)era * 146097 + doe - 719468;
+}
+
+static int ct_got_time(uint16_t, const ble_gatt_error *e, ble_gatt_attr *a, void *) {
+  uint8_t b[10];
+  if (e->status || OS_MBUF_PKTLEN(a->om) < 7) return 0;
+  os_mbuf_copydata(a->om, 0, 7, b);
+  const int y = b[0] | b[1] << 8;
+  if (y < 2020 || ct_zone == -128 || ct_dst == 255) return LOG("bluetooth: the iPhone's time has no zone\n"), 0;
+  const int32_t off = (ct_zone + ct_dst) * 15 * 60;  // seconds east of UTC, DST included
+  const int64_t local = ct_days(y, b[2], b[3]) * 86400 + b[4] * 3600 + b[5] * 60 + b[6];
+  net_set_auto_offset(off, true);
+  net_time_set((time_t)(local - off), "iPhone");
+  LOG("bluetooth: time from the iPhone, UTC%+.2g h\n", off / 3600.0f);
+  return 0;
+}
+
+static int ct_got_info(uint16_t, const ble_gatt_error *e, ble_gatt_attr *a, void *) {
+  uint8_t b[2];
+  if (!e->status && OS_MBUF_PKTLEN(a->om) >= 2) os_mbuf_copydata(a->om, 0, 2, b), ct_zone = (int8_t)b[0], ct_dst = b[1];
+  if (ct_time) ble_gattc_read(bt_conn, ct_time, ct_got_time, nullptr);
+  return 0;
+}
+
+static int ct_chr(uint16_t, const ble_gatt_error *e, const ble_gatt_chr *c, void *) {
+  if (e->status == 0) {
+    const uint16_t u = ble_uuid_u16(&c->uuid.u);
+    if (u == 0x2A2B) ct_time = c->val_handle;
+    if (u == 0x2A0F) ct_info = c->val_handle;
+  } else if (e->status == BLE_HS_EDONE) {
+    if (ct_info) ble_gattc_read(bt_conn, ct_info, ct_got_info, nullptr);
+    else if (ct_time) ble_gattc_read(bt_conn, ct_time, ct_got_time, nullptr);
+  }
+  return 0;
+}
+
+static int ct_svc(uint16_t, const ble_gatt_error *e, const ble_gatt_svc *s, void *) {
+  if (e->status == 0) ble_gattc_disc_all_chrs(bt_conn, s->start_handle, s->end_handle, ct_chr, nullptr);
+  return 0;
+}
+
+static void cts_begin() {
+  static const ble_uuid16_t CTS = BLE_UUID16_INIT(0x1805);
+  ct_time = ct_info = 0, ct_zone = -128, ct_dst = 255;
+  ble_gattc_disc_svc_by_uuid(bt_conn, &CTS.u, ct_svc, nullptr);
+}
+
 // ---------- Connection ----------
 static void bt_advertise();
 
 static int bt_gap(ble_gap_event *ev, void *) {
   switch (ev->type) {
-    case BLE_GAP_EVENT_CONNECT:
+    case BLE_GAP_EVENT_CONNECT: {
+      // A bonded iPhone may encrypt before this event is handled (ENC_CHANGE first): then all is under way already
       if (ev->connect.status) return bt_advertise(), 0;
-      bt_conn = ev->connect.conn_handle, bt_state = BT_CONN;
-      an_ns = an_cp = an_ds = an_ns_cccd = an_ds_cccd = 0, an_busy = false, an_qh = an_qt = 0;
+      bt_conn = ev->connect.conn_handle;
       LOG("bluetooth: connected\n");
+      ble_gap_conn_desc d;
+      if (!ble_gap_conn_find(bt_conn, &d) && d.sec_state.encrypted) break;
+      if (bt_state < BT_CONN || bt_state == BT_PAUSED) bt_state = BT_CONN;
       ble_gap_security_initiate(bt_conn);  // ANCS needs an encrypted link: pairs the first time
       break;
+    }
     case BLE_GAP_EVENT_DISCONNECT:
       LOG("bluetooth: disconnected (%d)\n", ev->disconnect.reason);
       bt_conn = BLE_HS_CONN_HANDLE_NONE, an_busy = false, am_lost();
@@ -377,7 +446,8 @@ static int bt_gap(ble_gap_event *ev, void *) {
       break;
     case BLE_GAP_EVENT_ENC_CHANGE:
       if (ev->enc_change.status) return LOG("bluetooth: pairing failed (%d)\n", ev->enc_change.status), 0;
-      bt_state = BT_SECURE;
+      bt_conn = ev->enc_change.conn_handle, bt_state = BT_SECURE;  // the handle from this event: it may come first
+      an_ns = an_cp = an_ds = an_ns_cccd = an_ds_cccd = 0, an_busy = false, an_qh = an_qt = 0;
       LOG("bluetooth: encrypted\n");
       ble_gattc_disc_svc_by_uuid(bt_conn, &ANCS_SVC.u, an_svc, nullptr);
       break;

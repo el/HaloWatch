@@ -445,7 +445,7 @@ static void nt_open_tap(int k) {
   nt_show(ntx.open), halo_nav_open(HIST_DETAIL_SCREEN);
 }
 
-static const HaloScreen NOTIF_SCREEN = {[] { nt_snapshot(), cl_enter(nt_list); },
+static const HaloScreen NOTIF_SCREEN = {[] { nt_unread = 0, nt_snapshot(), cl_enter(nt_list); },  // read: no dot
                                         [](float dt) {
                                           if (nt_ver != ntx_seen || bt_state != ntx_bt) nt_snapshot();
                                           cl_update(nt_list, dt);
@@ -666,6 +666,34 @@ static void music_draw() {
 }
 static const HaloScreen MUSIC_SCREEN = {[] { mu_snapshot(), mu.armed = -1; }, music_update, music_layout, music_draw,
                                         false, HALO_HOME_BOTH};
+
+// ---------- The face's bits from the iPhone (face.h): the song line, the unread dot, Music over the face ----------
+static const char *face_now_playing(float w) {
+  static uint32_t seen = ~0u;
+  static float seen_w;
+  static char line[96];
+  static bool playing;
+  if (md_ver != seen || w != seen_w) {
+    seen = md_ver, seen_w = w;
+    char t[96], a[64];
+    portENTER_CRITICAL(&md_mux);
+    playing = md.valid && md.state == 1 && md.title[0];
+    strlcpy(t, md.title, sizeof(t)), strlcpy(a, md.artist, sizeof(a));
+    portEXIT_CRITICAL(&md_mux);
+    char both[170];
+    snprintf(both, sizeof(both), "%s%s%s", t, a[0] ? " - " : "", a);
+    fit_text(line, sizeof(line), t20, both, w);
+  }
+  return playing ? line : nullptr;
+}
+
+static int face_unread() {
+  return nt_unread;
+}
+
+static void face_open_music(float y) {
+  halo_nav_face_open(MUSIC_SCREEN, HALO_FX_FADE, CX, y, 300, 40);
+}
 
 // ---------- Steps ----------
 static int st_day = -1, st_saved_day = -1;  // year * 400 + day of the year

@@ -64,6 +64,13 @@ static volatile uint32_t steps_today;  // apps.h counts them
 static float timer_face_fraction();    // what is left of the timer, 0..1 (−1 — none running)
 static int32_t timer_ms_left();        // until it rings, ms (−1 — not running)
 static void steps_poll(bool now);      // from loop(): the pedometer, saved to flash
+// From apps.h (the iPhone, over Bluetooth): what plays — "Title - Artist" fitted to w (nullptr: nothing plays),
+// how many notifications came since the Notifications screen was opened, and the Music screen over the face
+static const char *face_now_playing(float w);
+static int face_unread();
+static void face_open_music(float y);
+static HaloItem fc_song, fc_unread;
+static float fc_song_y = -1;  // where the song line is now (−1 — none)
 static HaloItem fc_timer, fc_ring_st, fc_steps;
 static char fc_steps_s[24];
 static HaloSpring fc_dy, fc_date_a, fc_pill_a;  // the block's shift; the date's and the pill's opacity
@@ -244,6 +251,8 @@ static void face_open_weather() {
 // Only while the face is on screen and still: the pill opens the Weather screen
 static void face_update(float) {
   const HaloFinger &f = halo_finger;
+  if (f.tap && !f.owner && fc_song_y > 0 && fabsf(f.y - fc_song_y) < 24 && fabsf(f.x - CX) < 150)
+    return face_open_music(fc_song_y);  // the song line opens Music
   if (!f.tap || f.owner || fc_pill_a.target < 1) return;  // no pill in this style
   if (fabsf(f.x - CX) < pill_width() / 2 + 10 && fabsf(f.y - PILL_Y - fc_dy.x) < PILL_H / 2 + 10) face_open_weather();
 }
@@ -301,6 +310,18 @@ static void face_layout(const HaloView &v) {
   text_mid(fc_steps, t20, fc_steps_s, fc_mid_bat, CX, FACE_DATE_Y + dy - 40, 1, DIM, ra, &halo_black);
   fc_steps.on_black = true;
   halo_view_commit(fc_steps, vd);
+  // Any style: what plays on the iPhone, one dim line where the style leaves room (a tap opens Music)
+  static const float SONG_Y[FS_N] = {428, 402, 402, 342, 66, 0};
+  const float sy = st == FS_ARCS ? FACE_TIME_Y + dy + fc_digit_h / 2 + 68 : SONG_Y[st];
+  const char *song = face_now_playing(st == FS_CLASSIC ? 250 : st == FS_ARCS ? 230 : 290);
+  fc_song_y = song ? (st == FS_ARCS ? halo_view_y(vd, sy) : sy) : -1;
+  text_mid(fc_song, t20, song ? song : "", fc_mid_bat, CX, sy, 1, 0xA8C7FA, song ? 1 : 0, &halo_black);
+  fc_song.on_black = true;
+  halo_view_commit(fc_song, st == FS_ARCS ? vd : v);
+  // New notifications: a blue dot at the bottom edge, until the Notifications screen is opened
+  fc_unread.kind = HI_CIRCLE, fc_unread.x = CX, fc_unread.y = 457, fc_unread.r = 6, fc_unread.scale = 1;
+  fc_unread.color = 0x8AB4F8, fc_unread.alpha = face_unread() > 0 ? 1 : 0, fc_unread.on_black = true;
+  halo_view_commit(fc_unread, v);
   // Any style: a running timer as a thin amber ring at the very edge (in 1/360 steps: not redrawn every frame)
   const float tf = timer_face_fraction();
   fc_timer.kind = HI_RING, fc_timer.x = fc_timer.y = CX, fc_timer.scale = 1, fc_timer.r = 229, fc_timer.w = 4;
@@ -329,6 +350,7 @@ static void face_layout(const HaloView &v) {
 static void face_draw() {
   halo_item_draw(fc_ring_s), halo_item_draw(fc_ring_b), halo_item_draw(fc_bat);
   halo_item_draw(fc_ring_st), halo_item_draw(fc_steps), halo_item_draw(fc_timer);
+  halo_item_draw(fc_song), halo_item_draw(fc_unread);
   for (auto &t : fc_tick) halo_item_draw(t);
   halo_item_draw(fc_day);
   halo_roll_draw(r_date), halo_roll_draw(r_time), halo_roll_draw(r_hh), halo_roll_draw(r_mm);
