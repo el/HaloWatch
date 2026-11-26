@@ -30,6 +30,8 @@ struct WxDay {
   int8_t now, hi, lo;
   uint8_t kind;
   uint8_t hour_kind[WX_HOURS];  // this hour and the next two
+  int32_t utc_off;               // the place's UTC offset, s (the World clock, apps.h)
+  bool off_ok;
 };
 // What the pages show (the frame task's copy; the fetch task fills wx_next and bumps wx_next_ver)
 static int wx_n = 1;                  // pages: one per city (1..WX_PAGES)
@@ -72,7 +74,10 @@ struct WxPage {
   HaloRoll t_now;  // the temperature: tabular digits, a new value rolls in
   HaloItem city, icon, t_hi, t_lo, pill, hicon[WX_HOURS], htime[WX_HOURS];
 };
-static WxPage wxp[WX_PAGES];
+struct WxPages {
+  WxPage p[WX_PAGES];
+};
+static WxPage (&wxp)[WX_PAGES] = psram_new<WxPages>().p;  // in PSRAM (HaloWatch.ino: psram_new)
 static char wx_hour[WX_HOURS][8];  // "7AM" ... — the same on every page
 static HaloItem wx_clock, wx_dot[WX_PAGES], wx_worm, wx_pull;
 static HaloSpring wx_pg;  // page (fractional while paging)
@@ -422,10 +427,9 @@ static bool wx_forecast(const WxCity &c, WxDay &d, bool first, char *buf, int ca
     d.hour_kind[i] = d.kind;
     if (hc && (*hc == '[' || *hc == ',')) d.hour_kind[i] = wx_kind(strtol(hc + 1, &hc, 10));
   }
-  if (first) {
-    const float off = wx_first_num(buf, "utc_offset_seconds");
-    if (!isnan(off)) net_set_auto_offset((int32_t)off);
-  }
+  const float off = wx_first_num(buf, "utc_offset_seconds");
+  d.off_ok = !isnan(off), d.utc_off = d.off_ok ? (int32_t)off : 0;
+  if (first && d.off_ok) net_set_auto_offset(d.utc_off);
   return true;
 }
 
@@ -500,7 +504,7 @@ static bool wx_apply() {
 }
 
 static void weather_net_begin() {
-  xTaskCreatePinnedToCore(wx_task, "weather", 8192, nullptr, 2, &wx_task_h, 0);
+  xTaskCreatePinnedToCoreWithCaps(wx_task, "weather", 8192, nullptr, 2, &wx_task_h, 0, MALLOC_CAP_SPIRAM);  // as ai_task
   halo_command("weather", [](const char *) {
     wx_cmd_update = true;
     xTaskNotifyGive(wx_task_h);

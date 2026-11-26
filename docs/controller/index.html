@@ -245,6 +245,25 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
           <input type="text" data-key="tz" spellcheck="false" placeholder="auto">
         </label>
         <label class="check"><input type="checkbox" data-key="clock24"> 24-hour clock</label>
+        <label>Watch face
+          <select data-key="face_style">
+            <option value="0">Classic: date, clock, weather</option>
+            <option value="1">Simple: date and clock</option>
+            <option value="2">Time only</option>
+            <option value="3">Analog</option>
+            <option value="4">Stacked: hours over minutes</option>
+            <option value="5">Arcs: seconds and battery rings</option>
+          </select>
+        </label>
+        <label>Clock color
+          <select data-key="face_color">
+            <option value="0">White</option>
+            <option value="1">Blue</option>
+            <option value="2">Amber</option>
+            <option value="3">Mint</option>
+            <option value="4">Rose</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
         <button id="btn-time">Set time from this computer</button>

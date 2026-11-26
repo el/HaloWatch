@@ -24,6 +24,8 @@ struct Cfg {
   int vol, gain, mic_ch, keep_s;
   char cities[160], tz[64];
   bool fahrenheit, clock24;
+  int face_style, face_color;
+  bool bt_on;
   int wx_every, net_idle;
 };
 static Cfg cfg;
@@ -64,7 +66,7 @@ static const CfgField CFG_FIELDS[] = {
     {"ai_lang", CF_STR, cfg.lang, sizeof(cfg.lang), 0, false, ""},
     {"ai_prompt", CF_STR, cfg.prompt, sizeof(cfg.prompt), 0, false, CFG_DEFAULT_PROMPT},
     {"ai_search", CF_BOOL, &cfg.search, 0, 0, false, "1"},
-    {"ai_auto_vad", CF_BOOL, &cfg.auto_vad, 0, 0, false, "0"},
+    {"ai_auto_vad", CF_BOOL, &cfg.auto_vad, 0, 0, false, "1"},  // gemini-3.1-flash-live closes manual turns: 1007
     {"ai_keep", CF_INT, &cfg.keep_s, 0, 3600, false, "120"},
     {"volume", CF_INT, &cfg.vol, 0, 100, false, "70"},
     {"mic_gain", CF_INT, &cfg.gain, 0, 37, false, "30"},
@@ -74,9 +76,13 @@ static const CfgField CFG_FIELDS[] = {
     {"wx_every", CF_INT, &cfg.wx_every, 10, 360, false, "30"},
     {"tz", CF_STR, cfg.tz, sizeof(cfg.tz), 0, false, ""},
     {"clock24", CF_BOOL, &cfg.clock24, 0, 0, false, "0"},
+    {"face_style", CF_INT, &cfg.face_style, 0, 5, false, "0"},  // face.h: FACE_STYLE
+    {"face_color", CF_INT, &cfg.face_color, 0, 4, false, "0"},  // face.h: FACE_COLOR
+    {"bt_on", CF_BOOL, &cfg.bt_on, 0, 0, false, "1"},            // ancs.h: iPhone notifications
     {"net_idle", CF_INT, &cfg.net_idle, 10, 3600, false, "60"},
 };
 #define CFG_N (int)(sizeof(CFG_FIELDS) / sizeof(CFG_FIELDS[0]))
+static_assert(sizeof(CFG_FIELDS) / sizeof(CFG_FIELDS[0]) <= 32, "cfg_ui_dirty: a bit per field");
 
 static void cfg_apply(const CfgField &f, const char *v) {  // the value into its field (no saving)
   if (f.type == CF_STR) strlcpy((char *)f.p, v, f.size_or_min);
@@ -183,6 +189,15 @@ static void cfg_unescape(char *s) {  // "\n" -> newline, "\\" -> "\", in place
 
 static void cfg_changed(const char *name);  // the app reacts (HaloWatch.ino: volume, mic, weather, time zone)
 
+static void cfg_save(const CfgField &f) {  // into flash, then the app reacts; from loop() only
+  if (f.type == CF_STR) cfg_prefs.putString(f.name, (const char *)f.p);
+  else if (f.type == CF_BOOL) cfg_prefs.putBool(f.name, *(bool *)f.p);
+  else cfg_prefs.putInt(f.name, *(int *)f.p);
+  cfg_ver++;
+  LOG("setting %s %s\n", f.name, f.secret ? "(secret) saved" : "saved");
+  cfg_changed(f.name);
+}
+
 static void cmd_set(const char *args) {
   static char name[24], val[1300];
   const char *sp = strchr(args, ' ');
@@ -201,14 +216,47 @@ static void cmd_set(const char *args) {
     CfgLock l;  // short: other tasks copy settings under it (the flash write below can take tens of ms)
     cfg_apply(*f, val);
   }
-  // Only this task (loop) writes settings, so reading the field here needs no lock
-  if (f->type == CF_STR) cfg_prefs.putString(f->name, (const char *)f->p);
-  else if (f->type == CF_BOOL) cfg_prefs.putBool(f->name, *(bool *)f->p);
-  else cfg_prefs.putInt(f->name, *(int *)f->p);
-  cfg_ver++;
-  LOG("setting %s %s\n", name, f->secret ? "(secret) saved" : "saved");
-  cfg_changed(name);
+  cfg_save(*f);
   Serial.printf("OK %s\n", name);
+}
+
+// From the watch's own screens (the frame task): the value at once, in flash from loop() 0.6 s after the last change
+// (cfg_ui_poll; a drag on a slider is one write, and a flash write never lands in the middle of a frame)
+static volatile uint32_t cfg_ui_dirty;  // a bit per CFG_FIELDS index
+static volatile uint32_t cfg_ui_at;
+
+static void cfg_ui_set(const char *name, int v) {  // CF_INT or CF_BOOL
+  for (int i = 0; i < CFG_N; i++) {
+    const CfgField &f = CFG_FIELDS[i];
+    if (strcmp(f.name, name)) continue;
+    {
+      CfgLock l;
+      if (f.type == CF_BOOL) *(bool *)f.p = v != 0;
+      else if (f.type == CF_INT) *(int *)f.p = constrain(v, f.size_or_min, f.max);
+    }
+    __atomic_or_fetch(&cfg_ui_dirty, 1u << i, __ATOMIC_RELAXED), cfg_ui_at = millis();
+    return;
+  }
+}
+
+static void cfg_ui_set_str(const char *name, const char *v) {  // CF_STR (not secrets)
+  for (int i = 0; i < CFG_N; i++) {
+    const CfgField &f = CFG_FIELDS[i];
+    if (strcmp(f.name, name) || f.type != CF_STR) continue;
+    {
+      CfgLock l;
+      strlcpy((char *)f.p, v, f.size_or_min);
+    }
+    __atomic_or_fetch(&cfg_ui_dirty, 1u << i, __ATOMIC_RELAXED), cfg_ui_at = millis();
+    return;
+  }
+}
+
+static void cfg_ui_poll(bool now = false) {  // from loop(); now — at once (before a restart)
+  if (!cfg_ui_dirty || (!now && millis() - cfg_ui_at < 600)) return;
+  const uint32_t d = __atomic_exchange_n(&cfg_ui_dirty, 0, __ATOMIC_RELAXED);
+  for (int i = 0; i < CFG_N; i++)
+    if (d & 1u << i) cfg_save(CFG_FIELDS[i]);
 }
 
 static void config_commands() {

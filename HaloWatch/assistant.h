@@ -7,8 +7,9 @@
 //
 // The screen: the clock along the top edge (as on Weather); an orb — its color says the state (blue — listening, violet
 // — thinking, teal — speaking, gray — idle, red — a problem), its size follows your voice while you talk and the
-// answer's while it speaks, and it breathes while waiting; under it what is happening ("Hold BOOT to talk",
-// "Listening…"), then what you said (one dim line, the end of it) and the answer as live captions: its last three
+// answer's while it speaks, and it breathes while waiting; under it what is happening, step by step ("Connecting to
+// Wi-Fi…", "Connecting to Gemini…", "Listening…", "Sending… 40%" with a ring around the orb filling as the question
+// goes out, "Thinking…", "Loading the answer…" when the reply runs dry, "Speaking", "Error: …"), then what you said (one dim line, the end of it) and the answer as live captions: its last three
 // lines, growing as it is spoken. All on black: at rest nothing is sent to the display.
 // Included from HaloWatch.ino after gemini.h and power.h.
 
@@ -21,7 +22,7 @@
 #define AS_LINES 3
 #define AS_WRAP_W 312.0f  // caption width: what fits at the lowest line, with a margin to the screen's edge
 
-static HaloItem as_clock, as_glow, as_orb, as_mic, as_status, as_you, as_line[AS_LINES], as_dot;
+static HaloItem as_clock, as_glow, as_orb, as_mic, as_status, as_you, as_line[AS_LINES], as_dot, as_send;
 static char as_status_s[96], as_you_s[96], as_line_s[AS_LINES][96];
 static float as_mid_status, as_mid_you, as_mid_line, as_mid_mic;
 static HaloSpring as_size, as_glow_k;  // the orb's size (0..1 of the extra) and the glow
@@ -32,8 +33,19 @@ static bool as_on_screen;  // the Assistant screen was laid out visible this fra
 static int as_down, as_up;
 static uint32_t as_mic_off_at;
 
+static bool as_sending() {  // let go, the question still going out
+  return ai_in_turn && !ai_hold && ring_avail(cap) > 0;
+}
+static float as_send_progress() {
+  return ai_send_total ? 1 - halo_clamp01((float)ring_avail(cap) / ai_send_total) : 1;
+}
+static bool as_buffering() {  // speaking, but the reply ran dry and the speaker waits for more
+  return ai_state == AI_SPEAKING && !ai_playing && !ai_turn_done;
+}
+
 static uint32_t as_state_color() {
   if (ai_hold) return 0x8AB4F8;
+  if (as_sending()) return 0xA8C7FA;
   switch (ai_state) {
     case AI_CONNECTING: return 0x8AB4F8;
     case AI_LISTENING: return 0x8AB4F8;
@@ -46,11 +58,14 @@ static uint32_t as_state_color() {
 
 static void as_status_text(char *s, size_t n) {
   const bool key = cfg.key[0], wifi = cfg.ssid[0];  // just "set or not": no lock (the frame task must not wait)
-  if (ai_hold) snprintf(s, n, ai_state == AI_CONNECTING ? "Listening… (connecting)" : "Listening…");
-  else if (ai_state == AI_CONNECTING) snprintf(s, n, "Connecting…");
+  const char *to = ai_net_wait ? "Wi-Fi" : "Gemini";
+  if (ai_hold) snprintf(s, n, ai_state == AI_CONNECTING ? "Listening… (connecting to %s)" : "Listening…", to);
+  else if (ai_state == AI_CONNECTING) snprintf(s, n, "Connecting to %s…", to);
+  else if (as_sending()) snprintf(s, n, "Sending… %d%%", (int)(as_send_progress() * 100));
   else if (ai_state == AI_THINKING) snprintf(s, n, "Thinking…");
-  else if (ai_state == AI_SPEAKING) snprintf(s, n, "Hold BOOT to interrupt");
-  else if (ai_state == AI_ERROR) snprintf(s, n, "%s", ai_error);
+  else if (as_buffering()) snprintf(s, n, "Loading the answer…");
+  else if (ai_state == AI_SPEAKING) snprintf(s, n, "Speaking (BOOT interrupts)");
+  else if (ai_state == AI_ERROR) snprintf(s, n, "Error: %s", ai_error);
   else if (!wifi) snprintf(s, n, "Set up Wi-Fi in the web controller");
   else if (!key) snprintf(s, n, "Add a Gemini API key in the web controller");
   else snprintf(s, n, "Hold BOOT to talk");
@@ -133,6 +148,7 @@ static void as_press() {
 
 static void as_release() {
   ai_short = millis() - ai_press_ms < 300;  // before ai_hold: the session task reads them in that order
+  ai_send_total = ring_avail(cap);          // what is still to send: the base of "Sending… NN%"
   __sync_synchronize();
   ai_hold = false, ai_capture = false;
   as_mic_off_at = halo_ms() + 300;
@@ -184,6 +200,11 @@ static void assistant_layout(const HaloView &v) {
   as_orb.color = col, as_orb.alpha = 1, as_orb.on_black = true;
   halo_view_commit(as_glow, v), halo_view_commit(as_orb, v);
   text_mid(as_mic, ic32, "", as_mid_mic, CX, AS_ORB_Y, 1, 0x1B1B1F, 1, &as_orb);
+  // Sending: a ring around the orb fills as the question goes out
+  as_send.kind = HI_RING, as_send.x = CX, as_send.y = AS_ORB_Y, as_send.r = AS_ORB_R + 22, as_send.w = 6;
+  as_send.v = as_send_progress(), as_send.color = 0xA8C7FA, as_send.color2 = 0x2A2C30, as_send.scale = 1;
+  as_send.alpha = as_sending() ? 1 : 0, as_send.on_black = true;
+  halo_view_commit(as_send, v);
   halo_view_commit(as_mic, v);
   // Status, what you said, the answer
   text_mid(as_status, t20, as_status_s, as_mid_status, CX, AS_STATUS_Y, 1, ai_state == AI_ERROR ? 0xF28B82 : DIM, 1,
@@ -201,7 +222,7 @@ static void assistant_layout(const HaloView &v) {
 
 static void assistant_draw() {
   halo_item_draw(as_clock);
-  halo_item_draw(as_glow), halo_item_draw(as_orb), halo_item_draw(as_mic);
+  halo_item_draw(as_glow), halo_item_draw(as_send), halo_item_draw(as_orb), halo_item_draw(as_mic);
   halo_item_draw(as_status), halo_item_draw(as_you);
   for (auto &l : as_line) halo_item_draw(l);
 }

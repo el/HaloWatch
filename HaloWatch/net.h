@@ -15,6 +15,14 @@
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <esp_sntp.h>
+#include <mbedtls/platform.h>
+
+// TLS buffers in PSRAM: the core allocates them from internal RAM only, and ~45 KB per connection is more than this
+// sketch leaves free there (mbedtls_ssl_setup: -0x7F00, every HTTPS request failed). Internal RAM is the fallback.
+static void *net_tls_calloc(size_t n, size_t size) {
+  void *p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return p ? p : heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
 
 // ---------- JSON: just enough to read the replies of Gemini and Open-Meteo (keys found by name, whitespace allowed) ----------
 static char *js_find(char *from, const char *key) {  // the value after "key":, or nullptr
@@ -83,7 +91,9 @@ static volatile bool net_time_ok;      // the clock has been set (SNTP or `time`
 static volatile int32_t net_auto_off = INT32_MIN;  // the "auto" time zone's UTC offset, s (INT32_MIN — not known)
 static bool net_sntp_started;
 static TaskHandle_t net_task_h;
-static SemaphoreHandle_t net_tls_mx;  // one TLS connection at a time: each takes ~40 KB of internal memory
+static SemaphoreHandle_t net_tls_mx;  // one TLS connection at a time (a binary semaphore: net_begin says why)
+
+static void bt_radio(bool wifi);  // ancs.h: Bluetooth gets the radio (and its 72 KB) back whenever Wi-Fi is off
 
 static bool halo_clock_valid() {
   return net_time_ok;
@@ -149,6 +159,7 @@ static void net_task(void *) {
           break;
         }
         if (!held) halo_stay_awake(true), held = true;
+        bt_radio(true);  // Bluetooth stops first: the two do not fit in internal RAM together
         WiFi.mode(WIFI_STA);
         WiFi.setSleep(false);  // streaming audio: no modem sleep (the radio is on only while it is used anyway)
         WiFi.begin(ssid, pass);
@@ -172,6 +183,7 @@ static void net_task(void *) {
         }
         break;
       case NET_UP:
+        net_poked = false;  // a poke while up keeps it up through net_last_ms; left set, Wi-Fi never went idle
         if (WiFi.status() != WL_CONNECTED) {
           LOG("wifi: lost the connection\n");
           WiFi.disconnect(true), WiFi.mode(WIFI_OFF);
@@ -183,8 +195,9 @@ static void net_task(void *) {
         }
         break;
     }
-    if (held && (net_state == NET_OFF || net_state == NET_NO_SSID || net_state == NET_FAILED))
-      halo_stay_awake(false), held = false;
+    const bool radio_off = net_state == NET_OFF || net_state == NET_NO_SSID || net_state == NET_FAILED;
+    if (held && radio_off) halo_stay_awake(false), held = false;
+    bt_radio(!radio_off);  // Wi-Fi off: Bluetooth back (if it is on in Settings)
   }
 }
 
@@ -260,9 +273,14 @@ static void net_scan_cmd() {  // SCAN [{"ssid":…,"rssi":…,"open":…}, …] 
 }
 
 static void net_begin() {
-  net_tls_mx = xSemaphoreCreateMutex();
+  mbedtls_platform_set_calloc_free(net_tls_calloc, heap_caps_free);  // before any connection is opened
+  // A binary semaphore, not a mutex: the assistant holds it for a whole session, and a FreeRTOS task gives back an
+  // inherited priority only once it holds no mutex — it kept the Wi-Fi task's 23 for the session and starved the
+  // speaker (halo_audio, 5): the reply crackled
+  net_tls_mx = xSemaphoreCreateBinary();
+  xSemaphoreGive(net_tls_mx);
   net_apply_tz();
-  xTaskCreatePinnedToCore(net_task, "net", 4096, nullptr, 3, &net_task_h, 0);
+  xTaskCreatePinnedToCore(net_task, "net", 6144, nullptr, 3, &net_task_h, 0);  // 6 KB: it starts Bluetooth too
   halo_command("time", [](const char *a) {  // time EPOCH [OFFSET_MIN] — from the web controller
     const long long t = atoll(a);
     if (t < 1700000000) return (void)Serial.println("ERR time bad epoch");

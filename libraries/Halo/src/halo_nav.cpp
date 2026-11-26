@@ -85,6 +85,7 @@ static HaloItem over_cover;  // Zoom: чёрная «карточка» под �
 
 void halo_view_commit(HaloItem &it, const HaloView &v) {
   it.x = halo_view_x(v, it.x), it.y = halo_view_y(v, it.y);
+  if (it.kind == HI_LINE) it.w = halo_view_x(v, it.w), it.h = halo_view_y(v, it.h);  // the line's other end
   it.scale *= v.s, it.alpha *= v.a;
   if (v.over && v.a < 0.999f) it.on_black = false, it.on = nullptr;  // под экраном не чёрный и не сплошной цвет
   halo_item_commit(it);

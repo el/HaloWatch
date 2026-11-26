@@ -82,6 +82,7 @@ bool halo_audio_begin(HaloAudioFill fill, int sample_rate = 22050);
 void halo_audio_volume(int v);  // 0..100 (громкость кодека; 60 — как в AmoledAudio)
 int halo_audio_get_volume();
 int halo_audio_rate();          // the I2S sample rate (0 — halo_audio_begin not called yet)
+uint32_t halo_audio_underruns();  // times the speaker ran out of samples while on (the sound task was late)
 // Microphones: the ES7210 (I2C 0x40, two mics), on the speaker's I2S in full duplex — the same sample rate
 // (halo_audio_begin first). On: the sink is called from the mic task (core 0) with n mono 16-bit samples (256 at a
 // time); off: the channel stops and the mics power down. Gain 0..37 dB (steps of 3, then 34.5, 36, 37.5); channel:
@@ -119,6 +120,9 @@ void halo_stay_awake(bool hold);   // не засыпать по-настоящ�
 // положат и снова не возьмут.
 // Звать в setup (ждёт датчик до 0,5 с); других данных датчик в этом режиме не даёт. Нужен тач (cfg.touch): шина его
 bool halo_motion_begin(int mg = 150);
+bool halo_steps_begin();           // the motion sensor's pedometer (after halo_motion_begin)
+uint32_t halo_steps();             // steps since halo_steps_begin or halo_steps_reset (I2C: not from the frame task)
+void halo_steps_reset();
 uint32_t halo_motion_count();      // сколько раз сработал с запуска (растёт, пока плату двигают)
 
 // ---------- Что изменилось ----------
@@ -185,6 +189,8 @@ void halo_ring(float cx, float cy, float r, float w, float frac, uint32_t rgb, u
 // Дуга с круглыми концами от угла a0 до a1 (радианы от 12 часов по часовой, a0 < a1) по окружности радиуса r,
 // толщина 2·hw: индикатор прокрутки у края, «червяк» точек страниц
 void halo_arc(float cx, float cy, float r, float hw, float a0, float a1, uint32_t rgb, float alpha = 1);
+// A thick line from (x0, y0) to (x1, y1), half-thickness hw, round ends (antialiased: by distance to the segment)
+void halo_line(float x0, float y0, float x1, float y1, float hw, uint32_t rgb, float alpha = 1);
 // Кнопка у края (EdgeButton): плашка шириной 2·hw от строки top со скруглёнными верхними углами rc, а бока и низ — по
 // эллипсу с центром (cx, cy): по вертикали R (низ — по кругу экрана), по горизонтали R − pad (бока — с отступом pad);
 // стык плашки с эллипсом скруглён радиусом f
@@ -324,7 +330,7 @@ float halo_rubber(float d, float k = 0.55f);
 
 // ---------- Элементы: сами замечают, что изменились, и просят перерисовать старое и новое место ----------
 // В update поставь поля и вызови halo_item_commit; в draw — halo_item_draw. alpha = 0 — элемент скрыт.
-enum : uint8_t { HI_TEXT, HI_MASK, HI_IMAGE, HI_RRECT, HI_CIRCLE, HI_RING, HI_ARC, HI_EDGE };
+enum : uint8_t { HI_TEXT, HI_MASK, HI_IMAGE, HI_RRECT, HI_CIRCLE, HI_RING, HI_ARC, HI_EDGE, HI_LINE };
 struct HaloItem {
   uint8_t kind = HI_TEXT;
   float x = 0, y = 0;            // центр; у текста x — по align (0 — левый край, 1 — центр, 2 — правый), y — середина строки
@@ -338,6 +344,7 @@ struct HaloItem {
   const HaloImage *image = nullptr;
   float w = 0, h = 0, r = 0, v = 0;  // плашка: w×h, углы r; круг: r; кольцо: r, w — толщина, v — доля дуги
   float a0 = 0, a1 = 0;              // дуга (HI_ARC): r, w — толщина, от угла a0 до a1 (радианы от 12 часов)
+  // Line (HI_LINE, a watch hand): from (x, y) to (w, h), r — half the thickness, round ends
   // Кнопка у края (HI_EDGE, EdgeButton Wear OS): (x, y) — центр круга экрана, r — радиус, по которому идёт низ кнопки;
   // h — высота кнопки от низа этого круга, w — ширина вверху, v — скругление верхних углов; бока — по изгибу экрана с
   // отступом 20 px (эллипс), низ — плавной дугой, стык верха с боками скруглён на 24 px. Масштаб — от центра круга

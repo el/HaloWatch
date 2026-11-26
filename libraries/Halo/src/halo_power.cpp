@@ -87,6 +87,41 @@ uint32_t halo_motion_count() {
   return imu_edges;
 }
 
+// ---------- Steps: the QMI8658's own pedometer (it counts while the board sleeps) ----------
+// Parameters as SensorLib's configPedometer example, in samples scaled from 62.5 Hz to our 128 Hz: two pages of
+// CAL1..CAL4 sent with CTRL9 command 0x0D; its interrupt goes to INT2 (not wired), INT1 stays wake-on-motion
+static bool imu_cmd(uint8_t cmd) {  // CTRL9 command with the handshake (as in halo_motion_begin)
+  halo_i2c_write(imu, 0x0A, cmd);
+  const bool done = imu_wait(0x2D, 0x80, 0x80);
+  halo_i2c_write(imu, 0x0A, 0x00);
+  imu_wait(0x2D, 0x80, 0x00);
+  return done;
+}
+
+bool halo_steps_begin() {
+  if (!imu_on) return false;
+  const uint8_t p1[8] = {0x00, 0x01, 0xCC, 0x00, 0x66, 0x00, 0x02, 0x01};  // sample_cnt 256, peak2peak, peak; page 1
+  const uint8_t p2[8] = {0x90, 0x01, 0x28, 0x0A, 0x00, 0x04, 0x02, 0x02};  // time_up 400, time_low 40, entry 10,
+                                                                          // precision 0, sig_count 4; page 2
+  for (int i = 0; i < 8; i++) halo_i2c_write(imu, 0x0B + i, p1[i]);
+  bool ok = imu_cmd(0x0D);
+  for (int i = 0; i < 8; i++) halo_i2c_write(imu, 0x0B + i, p2[i]);
+  ok &= imu_cmd(0x0D);
+  halo_i2c_write(imu, 0x09, 0x10);  // CTRL8: pedometer on, its interrupt on INT2
+  LOG("steps: pedometer %s\n", ok ? "on" : "settings NOT confirmed");
+  return ok;
+}
+
+uint32_t halo_steps() {  // STEP_CNT, 24 bits (0x5A..0x5C); from a task that may wait for I2C (not the frame task)
+  uint8_t b[3] = {0, 0, 0};
+  if (!imu_on || !halo_i2c_read(imu, 0x5A, b, 3)) return 0;
+  return b[0] | b[1] << 8 | (uint32_t)b[2] << 16;
+}
+
+void halo_steps_reset() {
+  if (imu_on) imu_cmd(0x0F);
+}
+
 // ---------- Sleep ----------
 static volatile bool req;
 static volatile uint32_t req_ms;

@@ -106,7 +106,11 @@ static HaloEase EASE_EMPH;
 static char bt_pct[8], bt_status[40], bt_detail[48];
 static float bt_mid_head, bt_mid_t20, bt_mid_pct, bt_mid_icon, bt_mid_bolt;
 static HaloItem bt_head, bt_out, bt_in, bt_fill, bt_nub, bt_bolt, bt_pct_t, bt_status_t, bt_detail_t, bt_cap;
-static HaloItem bt_grid[3], bt_ylab[3], bt_bar[BH_N], bt_shade[BT_RUNS], bt_strip[BT_RUNS], bt_sbolt_bg, bt_sbolt;
+static HaloItem bt_grid[3], bt_ylab[3], bt_shade[BT_RUNS], bt_strip[BT_RUNS], bt_sbolt_bg, bt_sbolt;
+struct BtBars {
+  HaloItem it[BH_N];
+};
+static HaloItem (&bt_bar)[BH_N] = psram_new<BtBars>().it;  // in PSRAM: internal RAM is for Wi-Fi and Bluetooth
 static HaloItem bt_vline[BT_MARKS], bt_hour[BT_MARKS], bt_empty;
 static const char *const BT_YLAB[3] = {"100%", "50%", "0%"};
 

@@ -121,6 +121,9 @@ static void IRAM_ATTR own_px(const uint16_t *buf, int bytes) {  // пиксел�
   gdma_ll_tx_clear_interrupt_status(&GDMA, dma_ch, GDMA_LL_EVENT_TX_TOTAL_EOF);
   gdma_ll_tx_set_desc_addr(&GDMA, dma_ch, (uint32_t)desc);
   gdma_ll_tx_start(&GDMA, dma_ch);
+  // Start SPI only once DMA has filled the FIFO: started on an empty one, it shifts out garbage (a glitch strip)
+  for (int i = 0; i < 2000 && !GDMA.channel[dma_ch].out.outfifo_status.outfifo_full_l1; i++) {  // ~20 turns
+  }
   go();
 }
 

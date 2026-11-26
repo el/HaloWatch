@@ -64,6 +64,7 @@ static void cfg_changed(const char *name) {  // from loop(), right after `set` s
   else if (!strcmp(name, "mic_channel")) halo_mic_channel(cfg.mic_ch);
   else if (!strcmp(name, "tz")) net_apply_tz();
   else if (!strncmp(name, "wx_", 3)) wx_cmd_update = true, xTaskNotifyGive(wx_task_h);
+  else if (!strcmp(name, "bt_on")) bt_apply();
   else if (!strncmp(name, "wifi_", 5)) net_reconnect = true, net_poke();  // try the new network now
   else if (!strncmp(name, "ai_", 3) && strcmp(name, "ai_keep")) ai_cmd_close = true;  // the next session uses it
 }

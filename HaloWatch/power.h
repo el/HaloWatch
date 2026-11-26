@@ -79,7 +79,7 @@ static void power_tick(float dt) {
           halo_damage_all();
         } else {
           pw_mode = PW_DARK;  // display.h has turned the panel off at zero
-          halo_sleep();
+          halo_sleep(timer_ms_left() >= 0 ? timer_ms_left() + 20 : 0);  // asleep for good, unless a timer runs
         }
       }
       break;
@@ -91,7 +91,8 @@ static void power_tick(float dt) {
         if (pw_k < 1) {  // Always On comes up in 0.4 s, then sleep until the next minute
           pw_k = fminf(1, pw_k + dt / 0.4f), pw_bright = (int)lroundf(PW_AOD_BRIGHT * pw_k);
         } else if (!halo_asleep()) {
-          halo_sleep(pw_ms_to_minute());
+          const int32_t t = timer_ms_left();  // a timer rings before the minute turns: wake for it
+          halo_sleep(t >= 0 && (uint32_t)t + 20 < pw_ms_to_minute() ? t + 20 : pw_ms_to_minute());
         }
       }
       break;
@@ -107,12 +108,22 @@ static void power_layout() {
   static const int8_t SX[8] = {0, 5, 7, 5, 0, -5, -7, -5}, SY[8] = {-7, -5, 0, 5, 7, 5, 0, -5};
   const int i = fc_min >= 0 ? fc_min & 7 : 0;
   const HaloView v;
-  halo_roll_layout(r_date, CX + SX[i], FACE_DATE_Y + SY[i], PW_DATE, 1, &halo_black, v);
-  halo_roll_layout(r_time, CX + SX[i], FACE_TIME_Y + SY[i], PW_TIME, 1, &halo_black, v);
+  const int st = face_style();  // the face's style (face.h): dim, no seconds, no rings
+  const float dy = fc_dy.target, x = CX + SX[i];
+  const float date_y = st == FS_ANALOG ? 0 : st == FS_STACKED ? fc_st_date_y : FACE_DATE_Y + dy;
+  halo_roll_layout(r_date, x, date_y + SY[i], PW_DATE, st == FS_ANALOG ? 0 : fc_date_a.target, &halo_black, v);
+  halo_roll_layout(r_time, x, FACE_TIME_Y + dy + SY[i], PW_TIME, st == FS_ANALOG || st == FS_STACKED ? 0 : 1,
+                   &halo_black, v);
+  const float sa = st == FS_STACKED ? 1 : 0;
+  halo_roll_layout(r_hh, x, fc_st_hh_y + SY[i], PW_TIME, sa, &halo_black, v);
+  halo_roll_layout(r_mm, x, fc_st_mm_y + SY[i], PW_DATE, sa, &halo_black, v);
+  face_hands(x, CX + SY[i], PW_TIME, false, st == FS_ANALOG ? 1 : 0, v);
 }
 
 static void power_draw() {
-  halo_roll_draw(r_date), halo_roll_draw(r_time);
+  halo_roll_draw(r_date), halo_roll_draw(r_time), halo_roll_draw(r_hh), halo_roll_draw(r_mm);
+  for (auto &h : fc_hand) halo_item_draw(h);
+  halo_item_draw(fc_cap[0]), halo_item_draw(fc_cap[1]);
 }
 
 static void power_build() {  // after halo_begin: the motion sensor is on its I2C bus

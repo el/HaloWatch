@@ -253,6 +253,12 @@ static void bounds(const HaloItem &it, float b[4]) {
       b[0] = it.x - it.w * s / 2 - 1, b[1] = it.y + (it.r - it.h) * s - 1;
       b[2] = it.x + it.w * s / 2 + 1, b[3] = it.y + it.r * s + 1;
       return;
+    case HI_LINE: {
+      const float e = it.r * s + 1;
+      b[0] = fminf(it.x, it.w) - e, b[1] = fminf(it.y, it.h) - e, b[2] = fmaxf(it.x, it.w) + e;
+      b[3] = fmaxf(it.y, it.h) + e;
+      return;
+    }
     case HI_ARC: {  // средняя линия дуги (концы и точки 12, 3, 6, 9 часов внутри неё) + половина толщины
       const float r = it.r * s, e = it.w * s / 2 + 1;
       float x0 = fminf(sinf(it.a0), sinf(it.a1)), x1 = fmaxf(sinf(it.a0), sinf(it.a1));
@@ -352,6 +358,9 @@ static void item_draw(const HaloItem &it, int32_t bg) {
       break;
     case HI_ARC:
       halo_arc(it.x, it.y, it.r * s, it.w * s / 2, it.a0, it.a1, it.color, it.alpha);
+      break;
+    case HI_LINE:
+      halo_line(it.x, it.y, it.w, it.h, it.r * s, it.color, it.alpha);
       break;
     case HI_EDGE:
       halo_edge(it.x, it.y, it.r * s, it.y + (it.r - it.h) * s, it.w * s / 2, it.v * s, 20 * s, 24 * s, it.color,

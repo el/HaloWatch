@@ -3,8 +3,9 @@
 // frame, as they could with a generic transport, and a slow network only means waiting).
 //
 // The protocol (BidiGenerateContent, v1beta; field names — as in Google's SDK): first message "setup" — the model,
-// AUDIO replies in the chosen voice, the system prompt, transcripts of both sides, push-to-talk (automatic activity
-// detection off: "activityStart" / "activityEnd" mark the user's turn), Google Search grounding, session resumption
+// AUDIO replies in the chosen voice, the system prompt, transcripts of both sides, the end of speech (by default the
+// server detects it, and "audioStreamEnd" on release; with ai_auto_vad 0, "activityStart" / "activityEnd" mark the
+// user's turn — gemini-3.1-flash-live-preview rejects those with 1007), Google Search grounding, session resumption
 // (the conversation survives a reconnect) and a sliding context window. Then "realtimeInput.audio" — the microphone,
 // 16-bit PCM at the I2S rate (24 kHz; the API resamples), base64, 100 ms per message. Replies: "serverContent" —
 // "modelTurn.parts[].inlineData" (24 kHz PCM, base64), "outputTranscription" / "inputTranscription", "interrupted",
@@ -78,6 +79,10 @@ static volatile float ai_in_level, ai_out_level;  // 0..1, for the orb
 static volatile bool ai_cmd_close, ai_cmd_mictest;
 static char ai_ask[400];
 static volatile bool ai_ask_new;
+// For the screen's finer states (assistant.h): waiting for Wi-Fi (not Gemini yet); a question being sent; how much of
+// it was still to send when BOOT was let go (the "Sending… NN%" progress)
+static volatile bool ai_net_wait, ai_in_turn;
+static volatile uint32_t ai_send_total;
 static TaskHandle_t ai_task_h;
 // The session task's big buffers — in PSRAM (internal memory is for Wi-Fi and TLS)
 struct AiScratch {
@@ -118,17 +123,50 @@ static void ai_fail(const char *fmt, ...) {
   LOG("assistant: %s\n", ai_error);
 }
 
-// The speaker (Halo's audio task): the reply, once 200 ms are buffered or the turn is over
+// The speaker (Halo's audio task): the reply, once ai_prebuf is buffered or the turn is over. ai_prebuf starts at
+// 200 ms and doubles (to 4 s) each time the reply runs dry mid-turn: on a slow link, a few short gaps, not a stutter
+static volatile uint32_t ai_prebuf = AI_PREBUF;
+static volatile uint32_t ai_gaps;  // the reply ran dry mid-turn (a gap is a click)
+static volatile uint32_t ai_chime_until;  // the timer's alarm (apps.h): beeps instead of the reply until then (millis)
+static volatile uint8_t ai_chime_mode;    // 0 — the alarm, 1 — a notification's ding (apps.h)
+
+static int ai_chime(int16_t *out, int n) {  // two short 880 Hz beeps a second, the edges softened (no clicks)
+  static uint32_t pos;  // samples since the chime started
+  if ((int32_t)(millis() - ai_chime_until) >= 0) return pos = 0, 0;
+  if (ai_chime_mode == 1) {  // the ding: 1320 Hz, then 1760 Hz, 90 ms each
+    for (int i = 0; i < n; i++, pos++) {
+      const uint32_t t = pos, len = AI_RATE * 9 / 100, gap = AI_RATE * 11 / 100;
+      const bool second = t >= gap && t < gap + len;
+      const uint32_t in = second ? t - gap : t;
+      const float f = t < len ? 1320 : second ? 1760 : 0;
+      const float env = f ? fminf(1, fminf(in, len - in) / 100.0f) : 0;
+      out[i] = (int16_t)(6000 * env * sinf(2 * HALO_PI * f * in / AI_RATE));
+    }
+    return n;
+  }
+  for (int i = 0; i < n; i++, pos++) {
+    const uint32_t t = pos % AI_RATE;  // in the second: beep 0..150 ms, beep 250..400 ms
+    const bool on = t < AI_RATE * 15 / 100 || (t >= AI_RATE / 4 && t < AI_RATE * 40 / 100);
+    const uint32_t in = t < AI_RATE / 4 ? t : t - AI_RATE / 4, len = AI_RATE * 15 / 100;
+    const float env = on ? fminf(1, fminf(in, len - in) / 120.0f) : 0;
+    out[i] = (int16_t)(9000 * env * sinf(2 * HALO_PI * 880 * t / AI_RATE));  // whole cycles a second: t is enough
+  }
+  return n;
+}
 static int ai_fill(int16_t *out, int n) {
+  if (const int c = ai_chime(out, n)) return c;
   if (ai_play_flush) play.r = play.w, ai_play_flush = false, ai_playing = false;
   const uint32_t a = ring_avail(play);
   if (!ai_playing) {
-    if (a >= AI_PREBUF || (ai_turn_done && a > 0)) ai_playing = true;
+    if (a >= ai_prebuf || (ai_turn_done && a > 0)) ai_playing = true;
     else return ai_out_level = 0, 0;
   }
   const int k = min((uint32_t)n, a);
   ring_get(play, out, k);
-  if (k < n) ai_playing = false;  // ran dry: wait for another 200 ms (or the end of the turn)
+  if (k < n) {  // ran dry: wait for more (or the end of the turn)
+    ai_playing = false;
+    if (!ai_turn_done) ai_prebuf = min<uint32_t>(ai_prebuf * 2, AI_RATE * 4), ai_gaps++;
+  }
   float e = 0;
   for (int i = 0; i < k; i++) e += (float)out[i] * out[i];
   ai_out_level = k ? sqrtf(e / k) / 8000 : 0;
@@ -372,7 +410,7 @@ static void ai_on_message(char *m) {
   if (js_true(sc, "turnComplete")) {
     ai_model_turn = false;
     if (ai_discard) ai_discard = false;  // the interrupted reply is over; what comes next is the new one
-    else ai_turn_done = true;
+    else ai_turn_done = true, hist_push(ai_you, ai_said);  // history.h (this task writes both strings)
   }
 }
 
@@ -443,6 +481,7 @@ static bool ai_connect() {
       else if (n > 0) ai_on_message(ws_rbuf);
     }
     if (ok && ai_setup_ok) {
+      ai_prebuf = AI_PREBUF;  // a new connection: the link may be better now
       LOG("assistant: session %s in %lu ms\n", resume ? "resumed" : "open", (unsigned long)(millis() - t0));
       return true;
     }
@@ -520,7 +559,10 @@ static void ai_task(void *) {
   bool conn = false, in_turn = false;
   uint32_t think_ms = 0;
   int16_t *chunk = ai_mem->chunk;
+  uint8_t logged_state = ai_state;
   for (;;) {
+    if (ai_state != logged_state) logged_state = ai_state, LOG("assistant: %s (speaker buffer %lu ms, gaps %lu, underruns %lu)\n", AI_NAME[ai_state],
+          (unsigned long)(ai_prebuf * 1000 / AI_RATE), (unsigned long)ai_gaps, (unsigned long)halo_audio_underruns());
     const bool manual = !cfg.auto_vad;
     // A short tap of BOOT: not a question
     if (ai_press_new && !ai_hold && ai_short) ai_press_new = false, cap.r = cap.w;
@@ -535,7 +577,10 @@ static void ai_task(void *) {
         continue;
       }
       ai_state = AI_CONNECTING;
-      if (!net_acquire(25000)) {
+      ai_net_wait = true;
+      const bool net_ok = net_acquire(25000);
+      ai_net_wait = false;
+      if (!net_ok) {
         ai_fail(net_state == NET_NO_SSID ? "Set up Wi-Fi in the web controller" : "No Wi-Fi connection");
       } else if (!ai_connect()) {
         net_release();
@@ -556,7 +601,7 @@ static void ai_task(void *) {
       ai_play_flush = true, ai_turn_done = false, ai_got_audio = false;
       ai_txt(ai_you, sizeof(ai_you), "", true), ai_txt(ai_said, sizeof(ai_said), "", true);
       if (manual) ok = ai_send_json("{\"realtimeInput\":{\"activityStart\":{}}}");
-      in_turn = true, ai_state = AI_LISTENING;
+      in_turn = ai_in_turn = true, ai_state = AI_LISTENING;
     }
     // Mic audio that belongs to no turn (the connection dropped while talking): dropped
     if (!in_turn && !ai_press_new && ring_avail(cap)) cap.r = cap.w;
@@ -568,7 +613,7 @@ static void ai_task(void *) {
     }
     if (ok && in_turn && !ai_hold && !ring_avail(cap)) {
       ok = ai_send_json(manual ? "{\"realtimeInput\":{\"activityEnd\":{}}}" : "{\"realtimeInput\":{\"audioStreamEnd\":true}}");
-      in_turn = false, ai_state = AI_THINKING, think_ms = millis();
+      in_turn = ai_in_turn = false, ai_state = AI_THINKING, think_ms = millis();
     }
     if (ok && ai_ask_new && !in_turn) {  // a typed question (`ask`)
       ai_ask_new = false, ai_play_flush = true, ai_turn_done = false, ai_got_audio = false;
@@ -583,13 +628,13 @@ static void ai_task(void *) {
     }
     // The state for the screen
     if (ai_state == AI_THINKING && ai_got_audio) ai_state = AI_SPEAKING;
-    if (ai_state == AI_THINKING && millis() - think_ms > 20000) ai_fail("No answer from Gemini");
+    if (ai_state == AI_THINKING && millis() - think_ms > 45000) ai_fail("No answer from Gemini");
     if (ai_state == AI_SPEAKING && ai_turn_done && !ai_playing && !ring_avail(play)) ai_state = AI_IDLE;
     if (!ok) {
       LOG("assistant: connection closed%s%s\n", ws_close_reason[0] ? ": " : "", ws_close_reason);
       if (in_turn || ai_state == AI_THINKING || (ai_state == AI_SPEAKING && !ai_turn_done))
         ai_fail("Connection lost%s%.60s", ws_close_reason[0] ? ": " : "", ws_close_reason);
-      ai_disconnect(), conn = in_turn = ai_model_turn = false;
+      ai_disconnect(), conn = in_turn = ai_in_turn = ai_model_turn = false;
       ai_turn_done = true;
       continue;
     }
@@ -604,7 +649,8 @@ static void ai_task(void *) {
 }
 
 static bool ai_busy() {  // the assistant is doing something: keep the screen on, the board up
-  return ai_hold || ai_press_new || ai_state == AI_CONNECTING || ai_state == AI_LISTENING ||
+  return ai_hold || ai_press_new || (int32_t)(millis() - ai_chime_until) < 0 || ai_state == AI_CONNECTING ||
+         ai_state == AI_LISTENING ||
          ai_state == AI_THINKING || ai_state == AI_SPEAKING || ai_playing;
 }
 
@@ -616,7 +662,8 @@ static void ai_begin() {
   ws_rbuf = (char *)heap_caps_malloc(AI_RBUF, MALLOC_CAP_SPIRAM);
   ai_mem = (AiScratch *)heap_caps_malloc(sizeof(AiScratch), MALLOC_CAP_SPIRAM);
   if (!cap.b || !play.b || !ws_sbuf || !ws_rbuf || !ai_mem) return (void)LOG("assistant: NO MEMORY\n");
-  xTaskCreatePinnedToCore(ai_task, "assistant", 10240, nullptr, 4, &ai_task_h, 0);
+  // Its stack in PSRAM (it never writes flash, the only thing a PSRAM stack must not do): internal RAM is short
+  xTaskCreatePinnedToCoreWithCaps(ai_task, "assistant", 10240, nullptr, 4, &ai_task_h, 0, MALLOC_CAP_SPIRAM);
   halo_command("ai", [](const char *a) {
     if (!strcmp(a, "close")) ai_cmd_close = true;
     LOG("assistant: %s%s%s\n", AI_NAME[ai_state], ai_state == AI_ERROR ? " — " : "", ai_state == AI_ERROR ? ai_error : "");

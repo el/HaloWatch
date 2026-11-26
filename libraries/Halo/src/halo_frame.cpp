@@ -232,7 +232,9 @@ static volatile bool shot_req, shot_ready, bench_ring_req;
 
 static void render_full(uint16_t *dst, bool swap) {  // dst — 466×466 в PSRAM
   // Пачка — во внутренней памяти, как у настоящего кадра: иначе замер bench врёт (запись в PSRAM медленная)
-  static uint16_t *tmp = (uint16_t *)heap_caps_malloc(HALO_ROWS * HALO_W * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  static uint16_t *tmp;
+  if (!tmp) tmp = (uint16_t *)heap_caps_malloc(HALO_ROWS * HALO_W * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!tmp) tmp = (uint16_t *)heap_caps_malloc(HALO_ROWS * HALO_W * 2, MALLOC_CAP_SPIRAM);  // internal RAM is short
   if (!tmp) return;
   const HaloBand saved = hb;
   for (int y = 0; y < HALO_H; y += HALO_ROWS) {
@@ -615,7 +617,7 @@ void halo_loop() {
     else
       LOG("%s: idle (%.0f ticks/s), update %.2f ms\n", cfg.name, s.ticks / sec, s.update_us / 1000.0f / max((uint32_t)1, s.ticks));
     if (hp_on && s.drawn) {  // мс на нарисованный кадр: ядро 1 / ядро 0
-      static const char *const N[HP_PARTS] = {"text", "mask", "image", "rrect", "circle", "ring", "arc", "edge", "clear", "-"};
+      static const char *const N[HP_PARTS] = {"text", "mask", "image", "rrect", "circle", "ring", "arc", "edge", "line", "clear", "-"};
       char line[280];
       int n = snprintf(line, sizeof(line), "%s prof ms/frame (core1/core0):", cfg.name);
       for (int i = 0; i < HP_PARTS - 1; i++)

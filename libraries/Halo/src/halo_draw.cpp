@@ -139,6 +139,34 @@ void HALO_HOT halo_circle(float cx, float cy, float r, uint32_t rgb, float alpha
   }
 }
 
+// ---------- Line (a watch hand): coverage by the distance to the segment, round ends ----------
+void HALO_HOT halo_line(float x0, float y0, float x1, float y1, float hw, uint32_t rgb, float alpha) {
+  const float e = hw + 1;
+  if (hw <= 0 || !halo_hits(fminf(x0, x1) - e, fminf(y0, y1) - e, fmaxf(x0, x1) + e, fmaxf(y0, y1) + e)) return;
+  const Paint P = paint(rgb, alpha);
+  const float dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy, il2 = l2 > 0 ? 1 / l2 : 0;
+  const int ya = max(hb.y, halo_floor(fminf(y0, y1) - e)), yb = min(hb.y + hb.rows - 1, ceil_i(fmaxf(y0, y1) + e));
+  for (int y = ya; y <= yb; y++) {
+    const float py = y + 0.5f;
+    // The row's part of the segment (the centre line within e of the row), then ±e: only those pixels are measured
+    float ta = 0, tb = 1;
+    if (fabsf(dy) > 1e-3f) {
+      ta = (py - e - y0) / dy, tb = (py + e - y0) / dy;
+      if (ta > tb) std::swap(ta, tb);
+      ta = fmaxf(ta, 0), tb = fminf(tb, 1);
+      if (ta > tb) continue;
+    }
+    const float xl = x0 + dx * ta, xr = x0 + dx * tb;
+    const int xa = max(hb.x0, halo_floor(fminf(xl, xr) - e)), xb = min(hb.x1, ceil_i(fmaxf(xl, xr) + e));
+    uint16_t *row = halo_row(y);
+    for (int x = xa; x <= xb; x++) {
+      const float px = x + 0.5f - x0, qy = py - y0, t = halo_clamp01((px * dx + qy * dy) * il2);
+      const float ex = px - dx * t, ey = qy - dy * t, d = halo_sqrt(ex * ex + ey * ey);
+      put(row + x, P, (int)(halo_clamp01(hw + 0.5f - d) * P.A));
+    }
+  }
+}
+
 // ---------- Прямоугольник со скруглёнными углами (края x0..x1, y0..y1 — дробные) ----------
 static inline float rrect_cov(float px, float py, float cx, float cy, float hw, float hh, float r, float inv2r) {
   const float qx = fabsf(px - cx) - (hw - r), qy = fabsf(py - cy) - (hh - r);

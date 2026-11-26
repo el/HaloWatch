@@ -31,6 +31,18 @@ static HaloAudioFill fill_cb;
 static int rate;
 static volatile int volume = 60;
 static volatile bool vol_dirty;
+static volatile bool pa_on;            // the amplifier is on: a DMA underrun now is heard
+static volatile uint32_t underruns;    // DMA ran out of samples while playing (the task was late)
+
+static bool IRAM_ATTR on_underrun(i2s_chan_handle_t, i2s_event_data_t *, void *) {
+  if (pa_on) underruns++;
+  return false;
+}
+
+uint32_t halo_audio_underruns() {
+  return underruns;
+}
+
 
 static void es_w(uint8_t r, uint8_t v) {
   const uint8_t b[2] = {r, v};
@@ -56,14 +68,14 @@ static void audio_task(void *) {
     const int n = fill_cb ? fill_cb(mono, FRAMES) : 0;
     if (n <= 0) {
       silent += FRAMES;
-      if (pa && silent > rate * 15 / 100) gpio_set_level((gpio_num_t)HALO_PIN_PA, 0), pa = false;
+      if (pa && silent > rate * 15 / 100) gpio_set_level((gpio_num_t)HALO_PIN_PA, 0), pa = pa_on = false;
       if (!pa) {  // тихо: DMA сам шлёт нули (auto_clear), задаче — спать
         vTaskDelay(pdMS_TO_TICKS(10));
         continue;
       }
     } else {
       silent = 0;
-      if (!pa) gpio_set_level((gpio_num_t)HALO_PIN_PA, 1), pa = true;
+      if (!pa) gpio_set_level((gpio_num_t)HALO_PIN_PA, 1), pa = pa_on = true;
     }
     for (int i = 0; i < FRAMES; i++) st[2 * i] = st[2 * i + 1] = i < n ? mono[i] : 0;
     size_t w = 0;
@@ -95,6 +107,8 @@ bool halo_audio_begin(HaloAudioFill fill, int sample_rate) {
   i2s_channel_init_std_mode(tx, &sc);
   sc.gpio_cfg.dout = I2S_GPIO_UNUSED, sc.gpio_cfg.din = (gpio_num_t)HALO_PIN_DIN;  // the same clocks, the mics' data
   if (i2s_channel_init_std_mode(rx, &sc) != ESP_OK) i2s_del_channel(rx), rx = nullptr;
+  const i2s_event_callbacks_t cb = {nullptr, nullptr, nullptr, on_underrun};
+  i2s_channel_register_event_callback(tx, &cb, nullptr);
   i2s_channel_enable(tx);
   // ES8311: сброс и включение, MCLK с вывода, все такты; делители для MCLK = 256·fs (pre_div 1, ×1, adc/dac div 1,
   // одинарная скорость, LRCK = MCLK/256, BCLK = MCLK/4, OSR 0x10)

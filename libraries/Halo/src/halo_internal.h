@@ -66,8 +66,8 @@ void hu_begin();  // пружины по умолчанию, команды ис
 extern uint32_t hf_finger_t;
 
 // Профайлер по видам элементов (halo_ui.cpp пишет, halo_frame.cpp печатает по команде prof)
-#define HP_PARTS 10  // 0..7 — виды HaloItem, 8 — чёрный фон пачки, 9 — остальное в draw
-#define HP_CLEAR 8
+#define HP_PARTS 11  // 0..8 — виды HaloItem, 9 — чёрный фон пачки, 10 — остальное в draw
+#define HP_CLEAR 9
 extern volatile bool hp_on;
 extern uint32_t hp_cyc[2][HP_PARTS];
 

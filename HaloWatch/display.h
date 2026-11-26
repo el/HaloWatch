@@ -38,18 +38,104 @@ static const uint8_t DP_LEVEL[DP_STEPS + 1] = {24, 34, 48, 66, 90, 118, 150, 180
 #define DP_OUTLINE 0x8E9099
 #define DP_TRACK 0x45474D    // the empty bar; a pressed "−"/"+"
 
-static volatile int dp_value = DP_DEFAULT;  // 0..DP_STEPS; settings.h saves it (from loop())
-static float dp_shown = DP_DEFAULT, dp_from = DP_DEFAULT, dp_t = 9;  // in steps; the 150 ms catch-up
+// ---------- The slider (also on the Sound screen, sound.h) ----------
+#define SL_MAX_DOTS 15
 static HaloEase EASE_SHARP;
+static float sl_mid_icon;
+struct Slider {
+  float y;                    // the pill's middle
+  int steps;                  // the value is 0..steps
+  volatile int value;         // read by loop() too (saving)
+  float shown, from, t = 9;   // in steps; the 150 ms catch-up
+  Press press[2];             // "−", "+"
+  int armed;                  // the finger came down on: −1 — "−", 1 — "+", 2 — the bar, 0 — nothing
+  uint32_t hold_at;
+  HaloItem pill, track, fill, dot[SL_MAX_DOTS], circle[2], icon[2];
+};
+
+static void slider_init(Slider &s, float y, int steps, int value) {
+  s.y = y, s.steps = min(steps, SL_MAX_DOTS + 1), s.value = constrain(value, 0, s.steps), s.shown = s.from = s.value;
+}
+
+static void slider_set(Slider &s, int v) {
+  v = constrain(v, 0, s.steps);
+  if (v == s.value) return;
+  s.from = s.shown, s.t = 0, s.value = v;
+}
+
+static void slider_tick(Slider &s, float dt) {  // the catch-up: every frame, on screen or not
+  s.t = fminf(s.t + dt, 9);
+  s.shown = s.from + (s.value - s.from) * halo_ease(EASE_SHARP, s.t / 0.15f);
+}
+
+static void slider_enter(Slider &s) {
+  s.armed = 0;
+  for (auto &p : s.press) halo_spring_set(p.s, 0), p.going_down = false;
+}
+
+static void slider_update(Slider &s, float dt) {
+  HaloFinger &f = halo_finger;
+  const float x0 = CX - DP_W / 2, x1 = CX + DP_W / 2, bx = x0 + DP_BTN, bw = DP_W - 2 * DP_BTN;
+  const bool on_pill = fabsf(f.y0 - s.y) < DP_H / 2 && f.x0 > x0 && f.x0 < x1;
+  if (f.pressed) {
+    s.armed = !on_pill || f.owner ? 0 : f.x0 < bx ? -1 : f.x0 > bx + bw ? 1 : 2;
+    s.hold_at = halo_ms() + 500;
+  }
+  if (s.armed == 2 && f.down && (!f.dragging || f.horiz) && halo_finger_claim(&s))  // the bar: by position
+    slider_set(s, (int)lroundf(halo_clamp01((f.x - bx) / bw) * s.steps));
+  if ((s.armed == -1 || s.armed == 1) && f.dragging) s.armed = 0;  // moved — a swipe, not a press
+  if ((s.armed == -1 || s.armed == 1) && f.tap) slider_set(s, s.value + s.armed);
+  if ((s.armed == -1 || s.armed == 1) && f.down && (int32_t)(halo_ms() - s.hold_at) >= 0)  // held: a repeat
+    slider_set(s, s.value + s.armed), s.hold_at = halo_ms() + 60;
+  press_update(s.press[0], s.armed == -1 && f.down, dt);
+  press_update(s.press[1], s.armed == 1 && f.down, dt);
+  if (!f.down) s.armed = 0;
+}
+
+static void slider_layout(Slider &s, const HaloView &v) {
+  // The pill and the pressed buttons' circles under the icons
+  s.pill.kind = HI_RRECT, s.pill.x = CX, s.pill.y = s.y, s.pill.w = DP_W, s.pill.h = DP_H, s.pill.r = DP_H / 2;
+  s.pill.scale = 1, s.pill.alpha = 1, s.pill.color = CARD_HI, s.pill.on_black = true;
+  halo_view_commit(s.pill, v);
+  for (int i = 0; i < 2; i++) {
+    const float p = halo_clamp01(s.press[i].s.x), cx = i ? CX + DP_W / 2 - DP_BTN / 2 : CX - DP_W / 2 + DP_BTN / 2;
+    HaloItem &c = s.circle[i];
+    c.kind = HI_CIRCLE, c.x = cx, c.y = s.y, c.r = 40 * p, c.scale = 1, c.color = DP_TRACK, c.on_black = false;
+    c.alpha = p > 0.01f ? 1 : 0;
+    halo_view_commit(c, v);
+    text_mid(s.icon[i], ic32, i ? "" : "", sl_mid_icon, cx, s.y, 1, TEXT, 1, nullptr);
+    halo_view_commit(s.icon[i], v);
+  }
+  // The bar: the empty part thin (4 dp), the filled one thick (12 dp), round ends; dots between the steps
+  const float bx = CX - DP_W / 2 + DP_BTN, bw = DP_W - 2 * DP_BTN, r = halo_clamp01(s.shown / s.steps), filled = bw * r;
+  s.track.kind = HI_RRECT, s.track.x = bx + bw / 2, s.track.y = s.y, s.track.w = bw, s.track.h = 8, s.track.r = 4;
+  s.track.scale = 1, s.track.alpha = 1, s.track.color = DP_TRACK, s.track.on_black = false;
+  s.fill.kind = HI_RRECT, s.fill.x = bx + filled / 2, s.fill.y = s.y, s.fill.w = filled, s.fill.h = 24, s.fill.r = 12;
+  s.fill.scale = 1, s.fill.alpha = filled > 1 ? 1 : 0, s.fill.color = DP_PRIMARY, s.fill.on_black = false;
+  halo_view_commit(s.track, v), halo_view_commit(s.fill, v);
+  for (int i = 1; i < s.steps; i++) {  // at the filled part's round end — no dot: the end itself marks the step
+    HaloItem &d = s.dot[i - 1];
+    d.kind = HI_CIRCLE, d.x = bx + i * (bw + 8) / s.steps - 4, d.y = s.y, d.r = 4, d.scale = 1;
+    d.alpha = halo_clamp01((fabsf(d.x - (bx + filled)) - 6) / 6);
+    d.color = d.x < bx + filled ? DP_ON_PRIMARY : DP_OUTLINE, d.on_black = false;
+    halo_view_commit(d, v);
+  }
+}
+
+static void slider_draw(Slider &s) {
+  halo_item_draw(s.pill);
+  for (int i = 0; i < 2; i++) halo_item_draw(s.circle[i]), halo_item_draw(s.icon[i]);
+  halo_item_draw(s.track), halo_item_draw(s.fill);
+  for (int i = 1; i < s.steps; i++) halo_item_draw(s.dot[i - 1]);
+}
+
+// ---------- The Display screen ----------
+static Slider &dp_sl = psram_new<Slider>();  // in PSRAM; the brightness, 0..DP_STEPS; settings.h saves it (from loop())
 static HaloSpring dp_power = {1, 0, 1};  // 1 — the screen is on, 0 — off (BOOT)
 static HaloSpringK K_DP_POWER;
 static int dp_sent = -1;  // the brightness last sent to the panel
-static Press dp_press[2];  // "−", "+"
-static int dp_armed;       // the finger came down on: −1 — "−", 1 — "+", 2 — the bar, 0 — nothing
-static uint32_t dp_hold_at;
-static float dp_mid_head, dp_mid_label, dp_mid_hint, dp_mid_icon;
-static HaloItem dp_head, dp_label, dp_hint, dp_pill, dp_track, dp_fill, dp_dot[DP_STEPS - 1];
-static HaloItem dp_circle[2], dp_icon[2];
+static float dp_mid_head, dp_mid_label, dp_mid_hint;
+static HaloItem dp_head, dp_label, dp_hint;
 // The lock
 #define DP_LOCK_Y 15.0f  // the lock's middle: where the time's letters are at the top (radius 219 from the center)
 static volatile bool dp_locked;  // settings.h saves it (from loop())
@@ -66,33 +152,27 @@ static uint8_t dp_level(float steps) {  // between the table's steps — linearl
 }
 
 static uint8_t dp_start_level() {  // the first frame's brightness: the slider's, or the lowest when locked
-  return dp_locked ? DP_LEVEL[0] : DP_LEVEL[dp_value];
+  return dp_locked ? DP_LEVEL[0] : DP_LEVEL[dp_sl.value];
 }
 
 static void display_build() {
   dp_mid_head = halo_text_mid(t_title, "Display");
   dp_mid_label = halo_text_mid(t20, "Brightness");
   dp_mid_hint = halo_text_mid(t20, "Press PWR to lock the screen");
-  dp_mid_icon = halo_text_mid(ic32, "");
+  sl_mid_icon = halo_text_mid(ic32, "");
   halo_ease_make(EASE_SHARP, 0, 0, 0, 1);
   K_DP_POWER = halo_spring(0.25f, 1);
   K_DP_LOCK = halo_spring(0.4f, 1);
   dp_mid_lock = halo_text_mid(ic18, "\uf023");
   halo_spring_set(dp_lock, dp_locked);  // started locked (flash) — dim and without touches from the first frame
   halo_touch_on(!dp_locked);
-  dp_shown = dp_from = dp_value, dp_sent = dp_start_level();  // halo_begin starts at this brightness
+  dp_sent = dp_start_level();  // halo_begin starts at this brightness (dp_sl: settings_load)
 }
 
 static void dp_lock_set(bool on) {
   dp_locked = on, dp_lock.target = on;
   halo_touch_on(!on);
   LOG("%s\n", on ? "locked" : "unlocked");
-}
-
-static void dp_set(int v) {
-  v = constrain(v, 0, DP_STEPS);
-  if (v == dp_value) return;
-  dp_from = dp_shown, dp_t = 0, dp_value = v;
 }
 
 // Every frame, whatever is on screen: the catch-up, the brightness and the lock (BOOT — power.h)
@@ -107,9 +187,8 @@ static void display_tick(float dt) {
   if (halo_finger_blocked() && dp_locked) dp_shake_at = halo_ms() | 1;
   halo_spring_run(dp_power, K_DP_POWER, dt);
   halo_spring_run(dp_lock, K_DP_LOCK, dt);
-  dp_t = fminf(dp_t + dt, 9);
-  dp_shown = dp_from + (dp_value - dp_from) * halo_ease(EASE_SHARP, dp_t / 0.15f);
-  const float k = halo_clamp01(dp_power.x), lk = halo_clamp01(dp_lock.x), lv = dp_level(dp_shown);
+  slider_tick(dp_sl, dt);
+  const float k = halo_clamp01(dp_power.x), lk = halo_clamp01(dp_lock.x), lv = dp_level(dp_sl.shown);
   ui_lock = lk;
   int level = (int)lroundf((lv + (DP_LEVEL[0] - lv) * lk) * k * k);  // the eye: the fade's end is the slow part
   if (pw_bright >= 0) level = pw_bright;  // Always On
@@ -119,27 +198,11 @@ static void display_tick(float dt) {
 }
 
 static void display_enter() {
-  dp_armed = 0;
-  for (auto &p : dp_press) halo_spring_set(p.s, 0), p.going_down = false;
+  slider_enter(dp_sl);
 }
 
 static void display_update(float dt) {
-  HaloFinger &f = halo_finger;
-  const float x0 = CX - DP_W / 2, x1 = CX + DP_W / 2, bx = x0 + DP_BTN, bw = DP_W - 2 * DP_BTN;
-  const bool on_pill = fabsf(f.y0 - DP_SL_Y) < DP_H / 2 && f.x0 > x0 && f.x0 < x1;
-  if (f.pressed) {
-    dp_armed = !on_pill || f.owner ? 0 : f.x0 < bx ? -1 : f.x0 > bx + bw ? 1 : 2;
-    dp_hold_at = halo_ms() + 500;
-  }
-  if (dp_armed == 2 && f.down && (!f.dragging || f.horiz) && halo_finger_claim(&dp_armed))  // the bar: by position
-    dp_set((int)lroundf(halo_clamp01((f.x - bx) / bw) * DP_STEPS));
-  if ((dp_armed == -1 || dp_armed == 1) && f.dragging) dp_armed = 0;  // moved — a swipe, not a press
-  if ((dp_armed == -1 || dp_armed == 1) && f.tap) dp_set(dp_value + dp_armed);
-  if ((dp_armed == -1 || dp_armed == 1) && f.down && (int32_t)(halo_ms() - dp_hold_at) >= 0)  // held: a repeat
-    dp_set(dp_value + dp_armed), dp_hold_at = halo_ms() + 60;
-  press_update(dp_press[0], dp_armed == -1 && f.down, dt);
-  press_update(dp_press[1], dp_armed == 1 && f.down, dt);
-  if (!f.down) dp_armed = 0;
+  slider_update(dp_sl, dt);
 }
 
 static void display_layout(const HaloView &v) {
@@ -148,41 +211,12 @@ static void display_layout(const HaloView &v) {
   text_mid(dp_hint, t20, "Press PWR to lock the screen", dp_mid_hint, CX, DP_HINT_Y, 1, DIM, 1, &halo_black);
   dp_head.on_black = dp_label.on_black = dp_hint.on_black = true;
   halo_view_commit(dp_head, v), halo_view_commit(dp_label, v), halo_view_commit(dp_hint, v);
-  // The pill and the pressed buttons' circles under the icons
-  dp_pill.kind = HI_RRECT, dp_pill.x = CX, dp_pill.y = DP_SL_Y, dp_pill.w = DP_W, dp_pill.h = DP_H, dp_pill.r = DP_H / 2;
-  dp_pill.scale = 1, dp_pill.alpha = 1, dp_pill.color = CARD_HI, dp_pill.on_black = true;
-  halo_view_commit(dp_pill, v);
-  for (int i = 0; i < 2; i++) {
-    const float p = halo_clamp01(dp_press[i].s.x), cx = i ? CX + DP_W / 2 - DP_BTN / 2 : CX - DP_W / 2 + DP_BTN / 2;
-    HaloItem &c = dp_circle[i];
-    c.kind = HI_CIRCLE, c.x = cx, c.y = DP_SL_Y, c.r = 40 * p, c.scale = 1, c.color = DP_TRACK, c.on_black = false;
-    c.alpha = p > 0.01f ? 1 : 0;
-    halo_view_commit(c, v);
-    text_mid(dp_icon[i], ic32, i ? "" : "", dp_mid_icon, cx, DP_SL_Y, 1, TEXT, 1, nullptr);
-    halo_view_commit(dp_icon[i], v);
-  }
-  // The bar: the empty part thin (4 dp), the filled one thick (12 dp), round ends; dots between the steps
-  const float bx = CX - DP_W / 2 + DP_BTN, bw = DP_W - 2 * DP_BTN, r = halo_clamp01(dp_shown / DP_STEPS), filled = bw * r;
-  dp_track.kind = HI_RRECT, dp_track.x = bx + bw / 2, dp_track.y = DP_SL_Y, dp_track.w = bw, dp_track.h = 8, dp_track.r = 4;
-  dp_track.scale = 1, dp_track.alpha = 1, dp_track.color = DP_TRACK, dp_track.on_black = false;
-  dp_fill.kind = HI_RRECT, dp_fill.x = bx + filled / 2, dp_fill.y = DP_SL_Y, dp_fill.w = filled, dp_fill.h = 24, dp_fill.r = 12;
-  dp_fill.scale = 1, dp_fill.alpha = filled > 1 ? 1 : 0, dp_fill.color = DP_PRIMARY, dp_fill.on_black = false;
-  halo_view_commit(dp_track, v), halo_view_commit(dp_fill, v);
-  for (int i = 1; i < DP_STEPS; i++) {  // at the filled part's round end — no dot: the end itself marks the step
-    HaloItem &d = dp_dot[i - 1];
-    d.kind = HI_CIRCLE, d.x = bx + i * (bw + 8) / DP_STEPS - 4, d.y = DP_SL_Y, d.r = 4, d.scale = 1;
-    d.alpha = halo_clamp01((fabsf(d.x - (bx + filled)) - 6) / 6);
-    d.color = d.x < bx + filled ? DP_ON_PRIMARY : DP_OUTLINE, d.on_black = false;
-    halo_view_commit(d, v);
-  }
+  slider_layout(dp_sl, v);
 }
 
 static void display_draw() {
   halo_item_draw(dp_head), halo_item_draw(dp_label), halo_item_draw(dp_hint);
-  halo_item_draw(dp_pill);
-  for (int i = 0; i < 2; i++) halo_item_draw(dp_circle[i]), halo_item_draw(dp_icon[i]);
-  halo_item_draw(dp_track), halo_item_draw(dp_fill);
-  for (auto &d : dp_dot) halo_item_draw(d);
+  slider_draw(dp_sl);
 }
 
 // The lock icon over everything (laid out after halo_nav_update, drawn after halo_nav_draw). As in our Fade, never

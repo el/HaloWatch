@@ -14,19 +14,21 @@
 // The gallery — the WearKit carousel one to one: a Wear OS card list (TransformingLazyColumn: cards shrink and fade
 // near the circle's edges, inertia, rubber past the ends), the time along the top arc (scrolls away), a scroll
 // indicator on the right (fades after 2 s), a tap on a card — the Android 16 transition, back — swipe from the left
-// edge following the finger. Three cards: "Assistant", "Weather" (weather.h), "Settings" (settings.h: "Display" —
-// brightness, display.h; "Battery" — battery.h). PWR locks the touch screen (display.h), a long press unlocks.
+// edge following the finger. Its title is "espAI". Three cards: "Assistant", "Weather" (weather.h), "Settings"
+// (settings.h: "Watch face" — face.h, "Display" — display.h, "Sound" — sound.h, "Battery" — battery.h, "Device"). PWR locks the touch screen (display.h), a long press unlocks.
 // Left alone, the watch dims to Always On and sleeps (power.h).
 //
 // What comes from where (lib/Halo, docs/halo.md): the list — halo_list_*, transitions — halo_nav_*, arcs — HI_ARC, the
 // time along the arc — halo_text_arc, sound and the microphones — halo_audio_*, halo_mic_*. Only what changed goes to
 // the display: at rest no frames are drawn at all.
-// Commands: face / face off (the face / the gallery), open N (0 — Assistant, 1 — Weather, 2 — Settings), back, tap/press/
+// Commands: face / face off (the face / the gallery), open N (0 Assistant, 1 Notifications, 2 Music, 3 History, 4 Weather, 5 World clock,
+// 6 Timer, 7 Stopwatch, 8 Steps, 9 Settings), back, tap/press/
 // swipe/drag/fling (an artificial finger); the controller's: cfg, set, status, time, wifi, weather, ai, ask, mic test,
 // reboot; instruments — trace, rec, shot, prof, sys, log.
 #pragma GCC optimize("O3", "fast-math")
 #include <Halo.h>
 #include "src/halo_assets.h"
+#include "psram.h"   // psram_new: big UI state in PSRAM
 #include "config.h"  // settings in flash; the web controller's serial protocol
 #include "net.h"     // Wi-Fi on demand, the clock from the internet, HTTPS (before the short macros below: W, CX, DP)
 
@@ -73,10 +75,18 @@ struct Entry {
   const char *title, *sub, *icon;  // значок — Font Awesome (шрифт ic24)
   uint32_t color;
 };
-static const Entry ENTRIES[] = {
+static const char IC_CLOCK[] = "clock", IC_WATCH[] = "stopwatch", IC_LIST[] = "list", IC_TIMER[] = "timer";  // drawn
+static const Entry ENTRIES[] = {  // in the order of APP_SCREENS (below the includes)
     {"Assistant", "hold BOOT to talk", "\uf130", 0x8AB4F8},
+    {"Notifications", "from your iPhone", "\uf0f3", 0x8AB4F8},
+    {"Music", "what plays on your iPhone", "\uf001", 0xF28B82},
+    {"History", "past questions", IC_LIST, 0xC9B6FF},
     {"Weather", "now and hourly", "\uf185", 0xFFB030},
-    {"Settings", "display, battery", "\uf013", 0xA8C7FA},
+    {"World clock", "your cities", IC_CLOCK, 0x7FCFFF},
+    {"Timer", "with an alarm", IC_TIMER, 0xFFC56B},
+    {"Stopwatch", "to the hundredth", IC_WATCH, 0xF6AEA9},
+    {"Steps", "today's count", "\uf004", 0xF7A8C4},
+    {"Settings", "face, sound, Wi-Fi", "\uf013", 0xA8C7FA},
 };
 #define N_ENTRIES (int)(sizeof(ENTRIES) / sizeof(ENTRIES[0]))
 
@@ -101,7 +111,35 @@ static float tt_x, tt_y, mid_head, mid_icon, mid_time;
 static char time_str[8] = "--:--";
 static int clock_h = -1, clock_m = -1;
 static HaloItem m_head, m_time, m_sc[3];
-static HaloItem m_bg[N_ENTRIES], m_disc[N_ENTRIES], m_icon[N_ENTRIES], m_title[N_ENTRIES], m_sub[N_ENTRIES];
+struct MenuDrawn {  // the cards' items, in PSRAM: internal RAM is for Wi-Fi and Bluetooth
+  HaloItem it[N_ENTRIES][4];
+  HaloItem bg[N_ENTRIES], disc[N_ENTRIES], icon[N_ENTRIES], title[N_ENTRIES], sub[N_ENTRIES];
+};
+static MenuDrawn &m_drawn = psram_new<MenuDrawn>();
+static HaloItem (&m_bg)[N_ENTRIES] = m_drawn.bg, (&m_disc)[N_ENTRIES] = m_drawn.disc, (&m_icon)[N_ENTRIES] = m_drawn.icon;
+static HaloItem (&m_title)[N_ENTRIES] = m_drawn.title, (&m_sub)[N_ENTRIES] = m_drawn.sub;
+
+// An icon drawn with rings and lines (IC_*), on the card's disc; a = 0 hides it
+static void drawn_icon(HaloItem *it, const char *kind, float x, float y, float s, float a, const HaloView &v) {
+  const uint32_t c = 0x1B1B1F;
+  for (int i = 0; i < 4; i++) it[i].kind = HI_LINE, it[i].color = c, it[i].color2 = c, it[i].scale = 1, it[i].alpha = 0;
+  auto line = [&](HaloItem &l, float x0, float y0, float x1, float y1, float hw) {
+    l.kind = HI_LINE, l.x = x + x0 * s, l.y = y + y0 * s, l.w = x + x1 * s, l.h = y + y1 * s, l.r = hw * s, l.alpha = a;
+  };
+  auto ring = [&](HaloItem &r, float cx, float cy, float rr) {
+    r.kind = HI_RING, r.x = x + cx * s, r.y = y + cy * s, r.r = rr * s, r.w = 3.5f * s, r.v = 1, r.alpha = a;
+  };
+  if (kind == IC_CLOCK) ring(it[0], 0, 0, 12), line(it[1], 0, 0, 0, -7, 1.8f), line(it[2], 0, 0, 6, 0, 1.8f);
+  else if (kind == IC_WATCH)
+    ring(it[0], 0, 2, 11), line(it[1], 0, 2, 4, -3, 1.6f), line(it[2], 0, -12, 0, -15, 2.4f),
+        line(it[3], 9, -7, 11, -9, 1.8f);
+  else if (kind == IC_TIMER)  // an hourglass
+    line(it[0], -8, -12, 8, -12, 1.8f), line(it[1], -8, 12, 8, 12, 1.8f), line(it[2], -6, -11, 6, 11, 1.8f),
+        line(it[3], 6, -11, -6, 11, 1.8f);
+  else if (kind == IC_LIST)
+    for (int i = 0; i < 3; i++) line(it[i], -10, -8 + 8 * i, 10, -8 + 8 * i, 1.8f);
+  for (int i = 0; i < 4; i++) halo_view_commit(it[i], v);
+}
 
 // Пришли на циферблат (halo_nav_face зовёт enter главного): в следующий раз галерея — с начала, как при запуске
 static void menu_enter() {
@@ -116,7 +154,7 @@ static void menu_update(float dt) {
   halo_list_update(menu, dt);
   // Нажатие на карточку — анимация нажатия, отпустил — открыть
   if (f.pressed) {
-    const int i = halo_list_hit(menu, f.y0);
+    const int i = f.owner ? -1 : halo_list_hit(menu, f.y0);  // a touch a banner took (ancs) is not a card's
     m_armed = i >= 1 ? i - 1 : -1;
     if (m_armed >= 0 && fabsf(f.x0 - CX) > M_ITEM_W / 2 * menu.fx[i].s) m_armed = -1;
   }
@@ -136,7 +174,7 @@ static void menu_update(float dt) {
 static void menu_layout(const HaloView &v) {
   const HaloListFx &h = menu.fx[0];
   if (menu.moving && v.a > 0 && v.s >= 0.999f) halo_subpixel = true;  // лента едет — буквы с долей пикселя, иначе дрожат
-  text_mid(m_head, t_title, "Gallery", mid_head, CX, h.top + M_HEAD_H / 2, 1, TEXT, h.a_bg, &halo_black);
+  text_mid(m_head, t_title, "espAI", mid_head, CX, h.top + M_HEAD_H / 2, 1, TEXT, h.a_bg, &halo_black);
   m_head.on_black = true;
   halo_view_commit(m_head, v);
   for (int k = 0; k < N_ENTRIES; k++) {
@@ -153,7 +191,9 @@ static void menu_layout(const HaloView &v) {
     HaloItem &dc = m_disc[k];
     dc.kind = HI_CIRCLE, dc.x = ix, dc.y = iy, dc.r = 32, dc.scale = s, dc.color = d.color, dc.alpha = ac;
     dc.on_black = true;
-    text_mid(m_icon[k], ic24, d.icon, mid_icon, ix, iy, s, 0x1B1B1F, ac, &dc);
+    const bool drawn = d.icon == IC_CLOCK || d.icon == IC_WATCH || d.icon == IC_LIST || d.icon == IC_TIMER;
+    text_mid(m_icon[k], ic24, drawn ? "" : d.icon, mid_icon, ix, iy, s, 0x1B1B1F, ac, &dc);
+    drawn_icon(m_drawn.it[k], drawn ? d.icon : "", ix, iy, s, drawn ? ac : 0, v);
     text_base(m_title[k], t24, d.title, x0 + 104 * s, y0 + 46 * s, s, TEXT, ac, &bg);
     text_base(m_sub[k], t20, d.sub, x0 + 104 * s, y0 + 80 * s, s, DIM, ac, &bg);
     halo_view_commit(bg, v), halo_view_commit(dc, v), halo_view_commit(m_icon[k], v);
@@ -185,6 +225,7 @@ static void menu_draw() {
   for (int k = 0; k < N_ENTRIES; k++) {
     halo_item_draw(m_bg[k]), halo_item_draw(m_disc[k]), halo_item_draw(m_icon[k]);
     halo_item_draw(m_title[k]), halo_item_draw(m_sub[k]);
+    for (auto &it : m_drawn.it[k]) halo_item_draw(it);
   }
   halo_item_draw(m_time);
   for (auto &it : m_sc) halo_item_draw(it);
@@ -212,7 +253,7 @@ static void menu_build() {
   for (int i = 0; i < N_ENTRIES; i++) heights[i + 1] = M_ITEM_H;
   // Низ последней карточки в конце ленты — 333 (так было и с кнопкой у края под ней)
   halo_list_init(menu, heights, N_ENTRIES + 1, 64, 333, true);
-  mid_head = halo_text_mid(t_title, "Gallery");
+  mid_head = halo_text_mid(t_title, "espAI");
   mid_icon = halo_text_mid(ic24, ENTRIES[1].icon);  // все значки — по одной середине (как в WearKit)
   mid_time = halo_text_mid(t24, "0123456789");
   halo_text_arc(tt_mask, t24, time_str, mid_time, TT_R, 0, false, 1, &tt_x, &tt_y);
@@ -221,11 +262,15 @@ static void menu_build() {
 #include "weather.h"    // экран «Weather» (погода по макету design/weather_mockup.webp), настоящая — от Open-Meteo
 #include "face.h"       // циферблат (по макету design/face_mockup.webp)
 #include "display.h"    // экран Display: яркость, PWR — блокировка
+#include "sound.h"      // the Sound screen: volume, the microphone's gain
 #include "battery.h"    // экран Battery: уровень, заряд, график за сутки; история — во флеше
+#include "history.h"    // the assistant's last answers, kept in flash (LittleFS)
 #include "gemini.h"     // the assistant's engine: Gemini Live over a WebSocket
 #include "power.h"      // Always On и сон: 15 с без касаний и движения — тусклые часы, плата спит до следующей минуты
 #include "assistant.h"  // the Assistant screen, push-to-talk on BOOT
-#include "settings.h"   // настройки: разделы (Display, Battery) и хранение во флеше
+#include "ancs.h"       // iPhone notifications over Bluetooth LE (ANCS)
+#include "settings.h"   // Settings: Watch face, Display, Sound, Assistant, Wi-Fi, Battery, Device; storage in flash
+#include "apps.h"       // History, World clock, Timer, Stopwatch, Steps
 #include "status.h"     // the controller's `status`; reactions to changed settings
 
 // ---------- Кадр ----------
@@ -233,10 +278,15 @@ static void menu_build() {
 // назад с погоды поверх циферблата; Settings — оба, но только от самого края (вниз — от верхних 90 px, вверх — от
 // нижних 70), остальное — прокрутка списка; Assistant — оба; сама галерея — только вниз от верхнего края
 static const HaloScreen MENU = {menu_enter, menu_update, menu_layout, menu_draw};
+static const HaloScreen *const APP_SCREENS[N_ENTRIES] = {&ASSISTANT,    &NOTIF_SCREEN,     &MUSIC_SCREEN, &HISTORY_SCREEN,
+                                                         &WEATHER,      &WORLD_SCREEN,     &TIMER_SCREEN,
+                                                         &STOPWATCH_SCREEN, &STEPS_SCREEN, &SETTINGS};
 static const HaloScreen FACE = {nullptr, face_update, face_layout, face_draw};
 
 static void update(float dt) {
   halo_finger_update();  // палец — раз в кадр, в начале
+  timer_tick();          // the timer rings (and wakes the board) — before power_tick sees the wake
+  notif_tick();          // a new notification: the screen on, a ding
   power_tick(dt);        // Always On и сон — до циферблата: в Always On цифры сменяются без прокрутки
   assistant_tick(dt);    // BOOT held — talking (after power_tick: BOOT wakes the board there first)
   clock_tick();
@@ -246,12 +296,14 @@ static void update(float dt) {
   if (cmd_open >= 0) open_req = cmd_open, cmd_open = -1;
   if (open_req >= 0 && halo_nav_at_home()) {  // открыть: переход Android 16
     cur = open_req;
-    halo_nav_open(cur == 0 ? ASSISTANT : cur == 1 ? WEATHER : SETTINGS);
+    halo_nav_open(*APP_SCREENS[cur]);
   }
   open_req = -1;
+  banner_update(dt);    // a notification's banner: before the screens, a tap on it is its own
   halo_nav_update(dt);  // свайпы к циферблату и назад, переходы, update и раскладка экранов
   display_overlay_layout();    // подсказка блокировки — поверх всего
   assistant_overlay_layout();  // the assistant's dot, on the other screens
+  banner_layout();             // a new notification, over everything
 }
 
 static void draw() {  // оба ядра, каждое — свою часть пачки строк
@@ -259,6 +311,7 @@ static void draw() {  // оба ядра, каждое — свою часть �
   halo_nav_draw();
   display_overlay_draw();
   assistant_overlay_draw();
+  banner_draw();
 }
 
 void setup() {
@@ -277,17 +330,23 @@ void setup() {
   battery_load();   // история батареи — из флеша
   battery_build();
   assistant_build();
+  sound_build();
   settings_build();
+  apps_build();
   halo_nav_begin(MENU);  // главный — меню; команда back — назад
   halo_nav_face(FACE);   // под ним — циферблат: с него запуск
   halo_command("open", [](const char *a) { cmd_open = constrain(atoi(a), 0, N_ENTRIES - 1); });
   HaloConfig cfg;
   cfg.name = "HaloWatch";
-  cfg.brightness = dp_start_level();  // сохранённая яркость (или самая низкая, если заблокировано) — с первого кадра
+  cfg.brightness = dp_start_level();
+  cfg.buffers = 2;  // two DMA strips, not three: 15 KB of internal RAM back for Bluetooth (double buffering still)  // сохранённая яркость (или самая низкая, если заблокировано) — с первого кадра
   halo_begin(update, draw, cfg);
-  power_build();         // датчик движения (будит, когда плату берут в руки) и команды aod, idle, sleep
+  power_build();
+  steps_begin();         // the pedometer (after the motion sensor), today's count from flash         // датчик движения (будит, когда плату берут в руки) и команды aod, idle, sleep
   config_commands();     // cfg, set, reboot
-  net_begin();           // Wi-Fi (on now: the clock and the weather), commands time, wifi
+  net_begin();
+  hist_begin();
+  bt_apply();            // Bluetooth (the bt_on setting): the net task starts it once Wi-Fi is off          // the history file (LittleFS on the "ffat" partition), in its own task           // Wi-Fi (on now: the clock and the weather), commands time, wifi
   weather_net_begin();   // Open-Meteo, every wx_every minutes
   ai_begin();            // the assistant: speaker and mic, the session task; commands ai, ask, mic
   status_begin();
@@ -297,5 +356,9 @@ void setup() {
 void loop() {
   halo_loop();
   settings_save_poll();  // яркость — во флеш (не из задачи кадров)
-  battery_poll();        // уровень батареи раз в 5 с, история — во флеш
+  cfg_ui_poll();         // settings changed on the watch (Watch face, Sound) — into flash
+  device_poll();         // Settings -> Device: restart, turn off
+  battery_poll();
+  steps_poll(false);     // the pedometer, saved to flash
+  bt_poll();             // an ANCS request the phone never answered        // уровень батареи раз в 5 с, история — во флеш
 }
