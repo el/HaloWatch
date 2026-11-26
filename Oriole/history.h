@@ -4,7 +4,7 @@
 // LittleFS (it formats in a moment, where FAT with wear levelling erases the whole 23 MB first, and a power cut never
 // leaves it half-written). A finished answer (gemini.h, turnComplete) is copied in at once; the file is written by
 // its own task once the assistant is quiet: a flash write stops code running from flash for a moment, and the speaker
-// would skip. Included from HaloWatch.ino before gemini.h.
+// would skip. Included from Oriole.ino before gemini.h.
 #include <LittleFS.h>
 
 #define HIST_N 20

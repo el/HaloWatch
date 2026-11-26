@@ -12,7 +12,7 @@
 //
 // The transition to the Weather screen used to be chosen here (Zoom, Fade, Slide; radio buttons and "Try it") — now it
 // is Fade, fixed (docs/halo.md, section 10; the command fx N still switches it until a reboot, to compare).
-// Included from HaloWatch.ino after display.h and battery.h.
+// Included from Oriole.ino after display.h and battery.h.
 #include <Preferences.h>
 
 static Preferences se_prefs;
@@ -22,7 +22,7 @@ static uint32_t se_changed_at;
 static bool se_lock_saved;
 
 static void settings_load() {
-  se_prefs.begin("halowatch", false);
+  se_prefs.begin("halowatch", false);  // the project's old name, kept: a new one would lose what is saved
   se_saved = se_seen = constrain((int)se_prefs.getUChar("bright", DP_DEFAULT), 0, DP_STEPS);
   slider_init(dp_sl, DP_SL_Y, DP_STEPS, se_saved);
   dp_locked = se_lock_saved = se_prefs.getBool("lock", false);
@@ -146,7 +146,7 @@ static void cl_draw(CardList &c) {
   }
 }
 
-static CardList &cl_new(const char *head, const CardRow *rows, int n) {  // in PSRAM (HaloWatch.ino: psram_new)
+static CardList &cl_new(const char *head, const CardRow *rows, int n) {  // in PSRAM (Oriole.ino: psram_new)
   CardList &c = psram_new<CardList>();
   c.head = head, c.rows = rows, c.n = n;
   return c;
@@ -272,12 +272,12 @@ static const CardRow BT_ROWS[] = {
      [] {}},
     {"Bluetooth", nullptr, SE_VALUE, [] { return cfg.bt_on ? "On (the watch sleeps less)" : "Off"; },
      [] { cfg_ui_set("bt_on", !cfg.bt_on); }},
-    {"Forget iPhone", nullptr, 0xF2B8B5, [] { return dv_sub(DV_FORGET, "then forget espAI on the iPhone", "Tap again to forget"); },
+    {"Forget iPhone", nullptr, 0xF2B8B5, [] { return dv_sub(DV_FORGET, "then forget Oriole on the iPhone", "Tap again to forget"); },
      [] { dv_tap(DV_FORGET); }},
 };
 static CardList &bt_list = cl_new("Bluetooth", BT_ROWS, sizeof(BT_ROWS) / sizeof(BT_ROWS[0]));
 CL_SCREEN(BT_SCREEN, bt_list);
-static const char BT_HOW[] = "On the iPhone: Settings, Bluetooth, espAI";
+static const char BT_HOW[] = "On the iPhone: Settings, Bluetooth, Oriole";
 
 // ---------- Settings ----------
 static const CardRow SE_ROWS[] = {

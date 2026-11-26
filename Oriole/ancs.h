@@ -1,6 +1,6 @@
 // ancs.h — iPhone notifications over Bluetooth LE: Apple's Notification Center Service (ANCS), no app on the phone.
 //
-// The watch advertises as "espAI" and asks for ANCS (a service solicitation in the advertisement), so it shows up in
+// The watch advertises as "Oriole" and asks for ANCS (a service solicitation in the advertisement), so it shows up in
 // the iPhone's Settings -> Bluetooth. Pair once there (Just Works; the bond is kept in flash by NimBLE) and the iPhone
 // reconnects by itself. On every connection: encryption, then the ANCS service and its three characteristics —
 // Notification Source (an 8-byte event per notification: added / modified / removed, its category and UID), Control
@@ -17,7 +17,7 @@
 // rebuilt from them, and one dated after Bluetooth stopped still gets its banner. This core's Bluetooth controller
 // cannot sleep: while Bluetooth is on the board stays up (halo_stay_awake), as on USB. Settings -> Bluetooth turns it
 // off (the bt_on setting) and forgets the iPhone.
-// Included from HaloWatch.ino after power.h.
+// Included from Oriole.ino after power.h.
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
@@ -480,7 +480,7 @@ static void bt_advertise() {
   f.appearance = 0x00C0, f.appearance_is_present = 1;   // a watch
   ble_gap_adv_set_fields(&f);
   ble_hs_adv_fields r = {};
-  r.name = (const uint8_t *)"espAI", r.name_len = 5, r.name_is_complete = 1;
+  r.name = (const uint8_t *)"Oriole", r.name_len = 6, r.name_is_complete = 1;
   ble_gap_adv_rsp_set_fields(&r);
   ble_gap_adv_params p = {};
   p.conn_mode = BLE_GAP_CONN_MODE_UND, p.disc_mode = BLE_GAP_DISC_MODE_GEN;
@@ -505,7 +505,7 @@ static void bt_start() {  // the net task
   ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT, ble_hs_cfg.sm_bonding = 1, ble_hs_cfg.sm_sc = 1;
   ble_hs_cfg.sm_our_key_dist = ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
   ble_svc_gap_init(), ble_svc_gatt_init();
-  ble_svc_gap_device_name_set("espAI");
+  ble_svc_gap_device_name_set("Oriole");
   ble_svc_gap_device_appearance_set(0x00C0);
   ble_store_config_init();
   if (bt_forget_req) bt_forget_req = false, ble_store_clear(), LOG("bluetooth: the iPhone is forgotten\n");
@@ -549,7 +549,7 @@ static void bt_apply() {  // the bt_on setting changed (cfg_changed, loop): the 
   if (net_task_h) xTaskNotifyGive(net_task_h);
 }
 
-static void bt_forget() {  // the bond goes; the iPhone must forget "espAI" too, then pair again
+static void bt_forget() {  // the bond goes; the iPhone must forget "Oriole" too, then pair again
   bt_forget_req = true;
   if (net_task_h) xTaskNotifyGive(net_task_h);
 }

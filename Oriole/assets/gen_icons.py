@@ -1,10 +1,10 @@
-"""Weather icons for HaloWatch: a sun partly hidden behind a cloud, as on the Pixel Watch weather tile.
+"""Weather icons for Oriole: a sun partly hidden behind a cloud, as on the Pixel Watch weather tile.
 
-Run from the repo root:  python3 HaloWatch/assets/gen_icons.py
+Run from the repo root:  python3 Oriole/assets/gen_icons.py
 Writes assets/wx_big.png (the current-weather icon) and assets/wx_small.png (hourly row) for the Weather screen, the
 other kinds in the same style (assets/wx_sun*.png, wx_cloud*.png, wx_rain*.png), and assets/face_*.png (partly cloudy,
 sunny, cloudy, rain) for the watch face; then
-`python3 tools/halo_assets.py HaloWatch` turns them into Halo images.
+`python3 tools/halo_assets.py Oriole` turns them into Halo images.
 
 Geometry is measured from design/weather_mockup.webp and converted to board pixels (circle 1254 px -> 466 px,
 scale 0.3722): the sun is a circle; the cloud is two circles (the left one is cut by the flat bottom) joined by a

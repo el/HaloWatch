@@ -11,7 +11,7 @@
 // Wi-Fi…", "Connecting to Gemini…", "Listening…", "Sending… 40%" with a ring around the orb filling as the question
 // goes out, "Thinking…", "Loading the answer…" when the reply runs dry, "Speaking", "Error: …"), then what you said (one dim line, the end of it) and the answer as live captions: its last three
 // lines, growing as it is spoken. All on black: at rest nothing is sent to the display.
-// Included from HaloWatch.ino after gemini.h and power.h.
+// Included from Oriole.ino after gemini.h and power.h.
 
 #define AS_ORB_Y 150.0f
 #define AS_ORB_R 50.0f

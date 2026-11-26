@@ -10,7 +10,7 @@
 // sends the computer's time when it connects). Until one of them sets it, the face shows "--:--". The time zone:
 // the `tz` setting (POSIX, e.g. "CET-1CEST,M3.5.0,M10.5.0/3"), or, when it is empty, "auto": the UTC offset of the
 // first weather city (Open-Meteo reports it with the forecast), or the computer's offset from `time`.
-// Included from HaloWatch.ino after config.h.
+// Included from Oriole.ino after config.h.
 #include <WiFi.h>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>

@@ -1,4 +1,4 @@
-// apps.h — the espAI menu's apps besides Assistant, Weather and Settings:
+// apps.h — the Oriole menu's apps besides Assistant, Weather and Settings:
 //   History     — the last questions and answers (history.h keeps them); a tap shows the whole answer, scrolling
 //   World clock — the time in the weather cities (their UTC offsets come with the weather) and how far from here
 //   Timer       — 1 to 60 minutes on a slider; a ring empties as it runs (on the face too), it beeps when done and
@@ -6,7 +6,7 @@
 //   Stopwatch   — minutes, seconds and hundredths; it goes on while you are elsewhere
 //   Steps       — today's steps from the motion sensor's pedometer (it counts while the board sleeps), a ring to
 //                 STEPS_GOAL; kept in flash, back to zero at midnight; on the Arcs face too
-// Included from HaloWatch.ino after settings.h.
+// Included from Oriole.ino after settings.h.
 
 // ---------- Text that fits: one line with "…", or wrapped into lines ----------
 static void fit_text(char *dst, size_t n, const HaloFont &f, const char *src, float w) {

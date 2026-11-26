@@ -13,7 +13,7 @@
 //   time EPOCH [OFFSET] -> OK time               set the clock (the controller sends the computer's), OFFSET —
 //                                                minutes east of UTC, used while the time zone is "auto"
 //   reboot
-// Included from HaloWatch.ino first of the app's headers.
+// Included from Oriole.ino first of the app's headers.
 #include <Preferences.h>
 
 struct Cfg {
@@ -187,7 +187,7 @@ static void cfg_unescape(char *s) {  // "\n" -> newline, "\\" -> "\", in place
   *o = 0;
 }
 
-static void cfg_changed(const char *name);  // the app reacts (HaloWatch.ino: volume, mic, weather, time zone)
+static void cfg_changed(const char *name);  // the app reacts (Oriole.ino: volume, mic, weather, time zone)
 
 static void cfg_save(const CfgField &f) {  // into flash, then the app reacts; from loop() only
   if (f.type == CF_STR) cfg_prefs.putString(f.name, (const char *)f.p);

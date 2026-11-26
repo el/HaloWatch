@@ -1,5 +1,5 @@
 // face.h — the watch face (design/face_mockup.webp): the date in capitals, a big clock and a weather pill. It is the
-// home of HaloWatch: swipe up anywhere and the gallery slides up over it; swipe down from the gallery's top edge to
+// home of Oriole: swipe up anywhere and the gallery slides up over it; swipe down from the gallery's top edge to
 // come back (halo_nav_face in lib/Halo).
 //
 // Every change moves, at 60 fps: changed digits and letters roll (HaloRoll: the old one goes up and fades, the new one
@@ -18,7 +18,7 @@
 // FACE_SCALE times larger around the screen center (asked for: closer to the edges); fonts and icons are made at that
 // size, not stretched at runtime.
 // Commands: fx N (another transition 0..2 until a reboot, to compare), tick [N] (the clock N minutes ahead), day (a day
-// ahead). Included from HaloWatch.ino after weather.h.
+// ahead). Included from Oriole.ino after weather.h.
 
 #define FACE_DATE 0xC2C3CB  // the date: light gray with a cool tint
 #define FACE_WHITE 0xF8F7F9

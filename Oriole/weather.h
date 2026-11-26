@@ -17,7 +17,7 @@
 // from the letter heights, weights from the amount of "ink" (assets/halo.conf). The whole screen is then drawn
 // WX_SCALE times larger around the screen center (asked for: closer to the edges); fonts and icons are made at that
 // size, not stretched at runtime.
-// Included from HaloWatch.ino after the shared helpers (TEXT, the baked clock mask tt_mask, K_PAGER).
+// Included from Oriole.ino after the shared helpers (TEXT, the baked clock mask tt_mask, K_PAGER).
 
 #define WX_WHITE 0xF9F9F9
 #define WX_LO 0xA2A2A2   // today's low: gray
@@ -77,7 +77,7 @@ struct WxPage {
 struct WxPages {
   WxPage p[WX_PAGES];
 };
-static WxPage (&wxp)[WX_PAGES] = psram_new<WxPages>().p;  // in PSRAM (HaloWatch.ino: psram_new)
+static WxPage (&wxp)[WX_PAGES] = psram_new<WxPages>().p;  // in PSRAM (Oriole.ino: psram_new)
 static char wx_hour[WX_HOURS][8];  // "7AM" ... — the same on every page
 static HaloItem wx_clock, wx_dot[WX_PAGES], wx_worm, wx_pull;
 static HaloSpring wx_pg;  // page (fractional while paging)

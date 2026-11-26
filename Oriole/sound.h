@@ -1,7 +1,7 @@
 // sound.h — the "Sound" screen (Settings -> Sound): the speaker's volume (10 % a step) and the microphone's gain
 // (3 dB a step), on the Display screen's sliders (display.h). A change is heard at once (halo_audio_volume,
 // halo_mic_gain) and saved as the volume and mic_gain settings (config.h: cfg_ui_set — the same ones the web
-// controller sets). Included from HaloWatch.ino after display.h.
+// controller sets). Included from Oriole.ino after display.h.
 
 // Two pills (104 px tall) and their labels in the circle: the lower pill's round ends just inside the edge
 #define SN_HEAD_Y 70.0f

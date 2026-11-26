@@ -1,4 +1,4 @@
-# HaloWatch
+# Oriole
 
 **English** · [Русский](README.ru.md)
 
@@ -15,7 +15,7 @@ driver, its own drawing. No LVGL, no Arduino_GFX. Animations run at **60 fps wit
 and when nothing moves, no frames are drawn at all. Left alone, it dims to an **Always On** clock and sleeps until you
 touch it, press a button or pick it up.
 
-<p align="center"><a href="https://www.youtube.com/watch?v=7rBIQl6EG08"><img src="https://img.youtube.com/vi/7rBIQl6EG08/hqdefault.jpg" width="480" alt="HaloWatch on the board — video review"></a><br><sub>▶ Video review on YouTube (version 1.1, before the assistant)</sub></p>
+<p align="center"><a href="https://www.youtube.com/watch?v=7rBIQl6EG08"><img src="https://img.youtube.com/vi/7rBIQl6EG08/hqdefault.jpg" width="480" alt="Oriole on the board — video review"></a><br><sub>▶ Video review on YouTube (version 1.1, before the assistant)</sub></p>
 
 | Watch face | Weather | Weather, page 2 | Settings |
 | :---: | :---: | :---: | :---: |
@@ -96,7 +96,7 @@ round development board in an aluminum case: a 1.75-inch AMOLED touch screen, so
 connector. Documentation — [docs.waveshare.com](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75C), examples
 and schematics — [GitHub](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C).
 
-| Part | What it is | In HaloWatch |
+| Part | What it is | In Oriole |
 | --- | --- | --- |
 | Processor | ESP32-S3R8: two Xtensa LX7 cores up to 240 MHz, 512 KB SRAM, 8 MB PSRAM | both cores draw every frame |
 | Flash | 32 MB | firmware and settings |
@@ -137,7 +137,7 @@ internet (SNTP) or from the web controller. There is no microSD slot either.
 - **Light sleep.** Memory and program stay, so waking takes ~20–35 ms to a picture — no boot. The AMOLED keeps the
   Always On picture by itself while the processor sleeps. Time in sleep is counted by the fast RC oscillator / 256:
   the default slow one ran 0.5 % fast (half a minute per hour asleep), this one 0.03–0.06 %.
-- **The assistant streams both ways.** A WebSocket over TLS to Gemini Live (`HaloWatch/gemini.h`, written on
+- **The assistant streams both ways.** A WebSocket over TLS to Gemini Live (`Oriole/gemini.h`, written on
   `esp_tls`): the microphones go out as 16-bit PCM at 24 kHz, 100 ms per message, while BOOT is held (push-to-talk:
   `activityStart` / `activityEnd`); the spoken answer comes back as 24 kHz PCM and plays as it arrives, after 200 ms of
   buffer. Both directions go through 1 MB rings in PSRAM, so a slow network or a slow start never drops what you said.
@@ -202,13 +202,13 @@ arduino-cli core install esp32:esp32@3.3.11
 Build and upload (replace the port with yours):
 
 ```bash
-arduino-cli compile --upload -p /dev/cu.usbmodem101 --libraries libraries --fqbn "esp32:esp32:esp32s3:FlashSize=32M,PSRAM=opi,FlashMode=qio,PartitionScheme=app5M_fat24M_32MB,USBMode=hwcdc,CDCOnBoot=cdc" HaloWatch
+arduino-cli compile --upload -p /dev/cu.usbmodem101 --libraries libraries --fqbn "esp32:esp32:esp32s3:FlashSize=32M,PSRAM=opi,FlashMode=qio,PartitionScheme=app5M_fat24M_32MB,USBMode=hwcdc,CDCOnBoot=cdc" Oriole
 ```
 
 No other libraries are needed: Wi-Fi, TLS and the WebSocket come from the ESP32 core (ESP-IDF).
 
-Fonts, icons and images are already built into `HaloWatch/src/halo_assets.*`. To change them, edit
-`HaloWatch/assets/halo.conf` and run `python3 tools/halo_assets.py HaloWatch` (needs `pip install numpy pillow`; the
+Fonts, icons and images are already built into `Oriole/src/halo_assets.*`. To change them, edit
+`Oriole/assets/halo.conf` and run `python3 tools/halo_assets.py Oriole` (needs `pip install numpy pillow`; the
 fonts are downloaded from their original repositories on first run).
 
 ### USB commands
@@ -240,7 +240,7 @@ the assistant is busy). `usb on` makes it sleep on USB too — then wake it by h
 
 | Folder | What's inside |
 | --- | --- |
-| `HaloWatch/` | The firmware: `HaloWatch.ino` (gallery), `gemini.h` (Gemini Live client), `assistant.h` (Assistant screen, push-to-talk), `net.h` (Wi-Fi, time, HTTPS), `config.h` (settings, serial protocol), `status.h`, `face.h`, `weather.h` (screen and Open-Meteo), `settings.h`, `display.h`, `battery.h`, `power.h` (Always On and sleep); `assets/` — fonts and icons sources |
+| `Oriole/` | The firmware: `Oriole.ino` (gallery), `gemini.h` (Gemini Live client), `assistant.h` (Assistant screen, push-to-talk), `net.h` (Wi-Fi, time, HTTPS), `config.h` (settings, serial protocol), `status.h`, `face.h`, `weather.h` (screen and Open-Meteo), `settings.h`, `display.h`, `battery.h`, `power.h` (Always On and sleep); `assets/` — fonts and icons sources |
 | `libraries/Halo/` | The Halo library: display and touch drivers, frame engine, drawing, springs, lists, screen transitions, audio (speaker and microphones), sleep and wake-up |
 | `docs/controller/` | The web controller: one HTML file, no dependencies (Web Serial) |
 | `tools/` | `halo_assets.py` — fonts, icons and images for Halo |
@@ -278,8 +278,8 @@ Third-party parts included in this repository:
 
 | What | Author | License |
 | --- | --- | --- |
-| Google Sans Flex font (glyphs rendered into `HaloWatch/src/halo_assets.cpp`) | Google | [SIL OFL 1.1](https://openfontlicense.org) |
-| Font Awesome Free icons (rendered into `HaloWatch/src/halo_assets.cpp`) | Fonticons, Inc. | icons [CC BY 4.0](https://fontawesome.com/license/free) |
+| Google Sans Flex font (glyphs rendered into `Oriole/src/halo_assets.cpp`) | Google | [SIL OFL 1.1](https://openfontlicense.org) |
+| Font Awesome Free icons (rendered into `Oriole/src/halo_assets.cpp`) | Fonticons, Inc. | icons [CC BY 4.0](https://fontawesome.com/license/free) |
 | ES8311 codec register sequence (`libraries/Halo/src/halo_audio.cpp`) | based on Espressif's es8311 driver | Apache 2.0 |
 | ES7210 microphone ADC register sequence (`libraries/Halo/src/halo_audio.cpp`) | based on [Waveshare's es7210 example](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) for this board | Apache 2.0 |
 | Board pins and display start-up sequence | based on [Waveshare examples](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) | Apache 2.0 |

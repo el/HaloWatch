@@ -1,4 +1,4 @@
-# HaloWatch
+# Oriole
 
 [English](README.md) · **Русский**
 
@@ -15,7 +15,7 @@
 разрывов картинки**, а когда ничего не движется, кадры не рисуются вовсе. Если часы не трогать, они гаснут до
 тусклых часов **Always On** и спят, пока их не коснутся, не нажмут кнопку или не возьмут в руки.
 
-<p align="center"><a href="https://www.youtube.com/watch?v=7rBIQl6EG08"><img src="https://img.youtube.com/vi/7rBIQl6EG08/hqdefault.jpg" width="480" alt="HaloWatch на плате — видеообзор"></a><br><sub>▶ Видеообзор на YouTube (версия 1.1, до ассистента)</sub></p>
+<p align="center"><a href="https://www.youtube.com/watch?v=7rBIQl6EG08"><img src="https://img.youtube.com/vi/7rBIQl6EG08/hqdefault.jpg" width="480" alt="Oriole на плате — видеообзор"></a><br><sub>▶ Видеообзор на YouTube (версия 1.1, до ассистента)</sub></p>
 
 | Циферблат | Погода | Погода, стр. 2 | Настройки |
 | :---: | :---: | :---: | :---: |
@@ -95,7 +95,7 @@ Settings.</sub>
 разъём для батареи. Документация — [docs.waveshare.com](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75C),
 примеры и схема — [GitHub](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C).
 
-| Что | Какое | В HaloWatch |
+| Что | Какое | В Oriole |
 | --- | --- | --- |
 | Процессор | ESP32-S3R8: два ядра Xtensa LX7 до 240 МГц, 512 КБ SRAM, 8 МБ PSRAM | оба ядра рисуют каждый кадр |
 | Флеш | 32 МБ | прошивка и настройки |
@@ -136,7 +136,7 @@ microSD тоже нет.
 - **Лёгкий сон.** Память и программа остаются, поэтому до картинки после пробуждения ~20–35 мс — без загрузки. Картинку
   Always On, пока процессор спит, AMOLED держит сам. Время во сне считает быстрый RC-генератор ÷ 256: медленный (по
   умолчанию) спешил на 0,5 % (полминуты за час сна), этот — 0,03–0,06 %.
-- **Ассистент — потоком в обе стороны.** WebSocket поверх TLS к Gemini Live (`HaloWatch/gemini.h`, написан на
+- **Ассистент — потоком в обе стороны.** WebSocket поверх TLS к Gemini Live (`Oriole/gemini.h`, написан на
   `esp_tls`): микрофоны уходят как 16-битный PCM 24 кГц, по 100 мс в сообщении, пока зажата BOOT («нажми и говори»:
   `activityStart` / `activityEnd`); ответ голосом приходит как PCM 24 кГц и играет по мере прихода, после 200 мс
   запаса. Оба направления идут через кольцевые буферы по 1 МБ в PSRAM — медленная сеть или долгое подключение не
@@ -201,13 +201,13 @@ arduino-cli core install esp32:esp32@3.3.11
 Собрать и прошить (порт — свой):
 
 ```bash
-arduino-cli compile --upload -p /dev/cu.usbmodem101 --libraries libraries --fqbn "esp32:esp32:esp32s3:FlashSize=32M,PSRAM=opi,FlashMode=qio,PartitionScheme=app5M_fat24M_32MB,USBMode=hwcdc,CDCOnBoot=cdc" HaloWatch
+arduino-cli compile --upload -p /dev/cu.usbmodem101 --libraries libraries --fqbn "esp32:esp32:esp32s3:FlashSize=32M,PSRAM=opi,FlashMode=qio,PartitionScheme=app5M_fat24M_32MB,USBMode=hwcdc,CDCOnBoot=cdc" Oriole
 ```
 
 Других библиотек не нужно: Wi-Fi, TLS и WebSocket — из ядра ESP32 (ESP-IDF).
 
-Шрифты, значки и картинки уже собраны в `HaloWatch/src/halo_assets.*`. Чтобы их поменять, правьте
-`HaloWatch/assets/halo.conf` и запустите `python3 tools/halo_assets.py HaloWatch` (нужно `pip install numpy pillow`;
+Шрифты, значки и картинки уже собраны в `Oriole/src/halo_assets.*`. Чтобы их поменять, правьте
+`Oriole/assets/halo.conf` и запустите `python3 tools/halo_assets.py Oriole` (нужно `pip install numpy pillow`;
 шрифты скачаются из своих репозиториев при первом запуске).
 
 ### Команды по USB
@@ -239,7 +239,7 @@ arduino-cli compile --upload -p /dev/cu.usbmodem101 --libraries libraries --fqbn
 
 | Папка | Что там |
 | --- | --- |
-| `HaloWatch/` | Прошивка: `HaloWatch.ino` (галерея), `gemini.h` (клиент Gemini Live), `assistant.h` (экран Assistant, «нажми и говори»), `net.h` (Wi-Fi, время, HTTPS), `config.h` (настройки, протокол по USB), `status.h`, `face.h`, `weather.h` (экран и Open-Meteo), `settings.h`, `display.h`, `battery.h`, `power.h` (Always On и сон); `assets/` — исходники шрифтов и значков |
+| `Oriole/` | Прошивка: `Oriole.ino` (галерея), `gemini.h` (клиент Gemini Live), `assistant.h` (экран Assistant, «нажми и говори»), `net.h` (Wi-Fi, время, HTTPS), `config.h` (настройки, протокол по USB), `status.h`, `face.h`, `weather.h` (экран и Open-Meteo), `settings.h`, `display.h`, `battery.h`, `power.h` (Always On и сон); `assets/` — исходники шрифтов и значков |
 | `libraries/Halo/` | Библиотека Halo: драйверы экрана и тача, движок кадров, рисование, пружины, ленты, переходы экранов, звук (динамик и микрофоны), сон и пробуждение |
 | `docs/controller/` | Веб-пульт: один HTML-файл без зависимостей (Web Serial) |
 | `tools/` | `halo_assets.py` — шрифты, значки и картинки для Halo |
@@ -276,8 +276,8 @@ arduino-cli compile --upload -p /dev/cu.usbmodem101 --libraries libraries --fqbn
 
 | Что | Автор | Лицензия |
 | --- | --- | --- |
-| Шрифт Google Sans Flex (буквы в `HaloWatch/src/halo_assets.cpp`) | Google | [SIL OFL 1.1](https://openfontlicense.org) |
-| Значки Font Awesome Free (в `HaloWatch/src/halo_assets.cpp`) | Fonticons, Inc. | значки — [CC BY 4.0](https://fontawesome.com/license/free) |
+| Шрифт Google Sans Flex (буквы в `Oriole/src/halo_assets.cpp`) | Google | [SIL OFL 1.1](https://openfontlicense.org) |
+| Значки Font Awesome Free (в `Oriole/src/halo_assets.cpp`) | Fonticons, Inc. | значки — [CC BY 4.0](https://fontawesome.com/license/free) |
 | Последовательность регистров кодека ES8311 (`libraries/Halo/src/halo_audio.cpp`) | по драйверу es8311 от Espressif | Apache 2.0 |
 | Последовательность регистров АЦП микрофонов ES7210 (`libraries/Halo/src/halo_audio.cpp`) | по [примеру es7210 от Waveshare](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) для этой платы | Apache 2.0 |
 | Пины платы и запуск экрана | по [примерам Waveshare](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) | Apache 2.0 |

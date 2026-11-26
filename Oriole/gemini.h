@@ -20,7 +20,7 @@
 // follow-up needs no reconnect), then closes; the next one resumes the conversation with the resumption handle.
 // Commands: ai (state), ask TEXT (a typed question, the reply is spoken), mic test (records 3 s, plays them back, logs
 // the level), ai close.
-// Included from HaloWatch.ino after net.h and weather.h (the city for the prompt).
+// Included from Oriole.ino after net.h and weather.h (the city for the prompt).
 #include <esp_tls.h>
 #include <mbedtls/base64.h>
 #include <sys/socket.h>
@@ -326,7 +326,7 @@ static bool ws_open(const char *key) {
   const int n = snprintf(req, sizeof(req),
                          "GET " AI_PATH " HTTP/1.1\r\nHost: " AI_HOST "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                          "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\nx-goog-api-key: %s\r\n"
-                         "User-Agent: HaloWatch\r\n\r\n",
+                         "User-Agent: Oriole\r\n\r\n",
                          k64, key);
   if (n >= (int)sizeof(req) || !ws_write_all(req, n)) return ws_close(), ai_fail("Could not send the request"), false;
   char resp[1024];

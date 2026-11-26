@@ -1,5 +1,5 @@
 // status.h — the `status` command for the web controller (STATUS {json}: Wi-Fi, clock, assistant, weather, battery,
-// memory) and what the app does when a setting changes (config.h calls cfg_changed). Included from HaloWatch.ino last.
+// memory) and what the app does when a setting changes (config.h calls cfg_changed). Included from Oriole.ino last.
 
 #define HW_VERSION "1.2"
 

@@ -19,7 +19,7 @@
 // it fades and grows in, wiggles when the locked screen is touched, and opens (the open lock) as it fades out on
 // unlocking. The lock is kept in flash (settings.h): after a reboot the watch starts locked. Commands pwr / pwr long —
 // the same presses.
-// Included from HaloWatch.ino after face.h, before settings.h.
+// Included from Oriole.ino after face.h, before settings.h.
 
 #define DP_STEPS 8
 #define DP_DEFAULT 7  // = 180, the brightness before this screen existed

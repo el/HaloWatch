@@ -14,7 +14,7 @@
 // Commands: aod on|off (Always On, or dark when idle), idle N (s; 0 — never), sleep (Always On now), wake (as a
 // touch — only while the board stays up: on USB), usb on|off (really sleep on USB too — the port then goes quiet:
 // wake the board by hand before flashing it).
-// Included from HaloWatch.ino after gemini.h, before assistant.h.
+// Included from Oriole.ino after gemini.h, before assistant.h.
 #include <sys/time.h>
 
 #define PW_IDLE_S 15

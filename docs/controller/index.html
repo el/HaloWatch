@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HaloWatch Controller</title>
-<meta name="description" content="Set up HaloWatch over USB: Wi-Fi, the Gemini assistant, weather, clock, and a live log.">
+<title>Oriole Controller</title>
+<meta name="description" content="Set up Oriole over USB: Wi-Fi, the Gemini assistant, weather, clock, and a live log.">
 <style>
 :root {
   --bg: #f6f7f9; --panel: #ffffff; --panel2: #f0f2f5; --line: #dfe3e8; --text: #1b1d21; --dim: #5f6570;
@@ -85,7 +85,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 <body>
 <header>
   <div class="bar">
-    <div class="brand"><span class="dot" aria-hidden="true"></span>HaloWatch Controller</div>
+    <div class="brand"><span class="dot" aria-hidden="true"></span>Oriole Controller</div>
     <span class="chip" id="chip-conn"><i></i><span>Not connected</span></span>
     <span class="chip" id="chip-wifi"><i></i><span>Wi-Fi</span></span>
     <span class="chip" id="chip-ai"><i></i><span>Assistant</span></span>
@@ -377,7 +377,7 @@ $('#btn-save-log').onclick = () => {
   const blob = new Blob([logLines.map(o => o.text).join('\n') + '\n'], { type: 'text/plain' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `halowatch-log-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+  a.download = `oriole-log-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
 
@@ -497,7 +497,7 @@ function showStatus(s) {
   const aiCls = { listening: 'info', thinking: 'info', speaking: 'ok', connecting: 'info', error: 'err' }[s.ai] || '';
   setChip('#chip-ai', aiCls, 'Assistant: ' + s.ai);
   const rows = [
-    ['Firmware', `HaloWatch ${s.version} · up ${Math.floor(s.uptime / 3600)} h ${Math.floor(s.uptime / 60) % 60} min`],
+    ['Firmware', `Oriole ${s.version} · up ${Math.floor(s.uptime / 3600)} h ${Math.floor(s.uptime / 60) % 60} min`],
     ['Wi-Fi', s.wifi === 'connected' ? `${s.ssid} · ${s.ip} · ${s.rssi} dBm` : `${wifiText}${s.ssid ? ' (' + s.ssid + ')' : ''}`],
     ['Clock', s.clock_ok ? `${s.local} · ${s.tz ? 'time zone ' + s.tz : 'time zone auto'}` : 'not set yet'],
     ['Assistant', s.ai + (s.ai_error ? ' — ' + s.ai_error : '') + (s.session ? ' · session open' : '')],

@@ -1,4 +1,4 @@
-// HaloWatch — a watch with a voice assistant, on its own UI library Halo.
+// Oriole — a watch with a voice assistant, on its own UI library Halo.
 //
 // Hold BOOT and talk, let go and the answer is spoken: Gemini Live over Wi-Fi (gemini.h — the engine, assistant.h —
 // the screen and push-to-talk). Everything is set up from a web page over USB — Wi-Fi, the API key, the voice and
@@ -14,7 +14,7 @@
 // The gallery — the WearKit carousel one to one: a Wear OS card list (TransformingLazyColumn: cards shrink and fade
 // near the circle's edges, inertia, rubber past the ends), the time along the top arc (scrolls away), a scroll
 // indicator on the right (fades after 2 s), a tap on a card — the Android 16 transition, back — swipe from the left
-// edge following the finger. Its title is "espAI". Three cards: "Assistant", "Weather" (weather.h), "Settings"
+// edge following the finger. Its title is "Oriole". Three cards: "Assistant", "Weather" (weather.h), "Settings"
 // (settings.h: "Watch face" — face.h, "Display" — display.h, "Sound" — sound.h, "Battery" — battery.h, "Device"). PWR locks the touch screen (display.h), a long press unlocks.
 // Left alone, the watch dims to Always On and sleeps (power.h).
 //
@@ -174,7 +174,7 @@ static void menu_update(float dt) {
 static void menu_layout(const HaloView &v) {
   const HaloListFx &h = menu.fx[0];
   if (menu.moving && v.a > 0 && v.s >= 0.999f) halo_subpixel = true;  // лента едет — буквы с долей пикселя, иначе дрожат
-  text_mid(m_head, t_title, "espAI", mid_head, CX, h.top + M_HEAD_H / 2, 1, TEXT, h.a_bg, &halo_black);
+  text_mid(m_head, t_title, "Oriole", mid_head, CX, h.top + M_HEAD_H / 2, 1, TEXT, h.a_bg, &halo_black);
   m_head.on_black = true;
   halo_view_commit(m_head, v);
   for (int k = 0; k < N_ENTRIES; k++) {
@@ -253,7 +253,7 @@ static void menu_build() {
   for (int i = 0; i < N_ENTRIES; i++) heights[i + 1] = M_ITEM_H;
   // Низ последней карточки в конце ленты — 333 (так было и с кнопкой у края под ней)
   halo_list_init(menu, heights, N_ENTRIES + 1, 64, 333, true);
-  mid_head = halo_text_mid(t_title, "espAI");
+  mid_head = halo_text_mid(t_title, "Oriole");
   mid_icon = halo_text_mid(ic24, ENTRIES[1].icon);  // все значки — по одной середине (как в WearKit)
   mid_time = halo_text_mid(t24, "0123456789");
   halo_text_arc(tt_mask, t24, time_str, mid_time, TT_R, 0, false, 1, &tt_x, &tt_y);
@@ -337,7 +337,7 @@ void setup() {
   halo_nav_face(FACE);   // под ним — циферблат: с него запуск
   halo_command("open", [](const char *a) { cmd_open = constrain(atoi(a), 0, N_ENTRIES - 1); });
   HaloConfig cfg;
-  cfg.name = "HaloWatch";
+  cfg.name = "Oriole";
   cfg.brightness = dp_start_level();
   cfg.buffers = 2;  // two DMA strips, not three: 15 KB of internal RAM back for Bluetooth (double buffering still)  // сохранённая яркость (или самая низкая, если заблокировано) — с первого кадра
   halo_begin(update, draw, cfg);
