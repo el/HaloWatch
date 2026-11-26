@@ -19,6 +19,7 @@
 
 // ---------- Motion sensor: wake-on-motion on INT1 (register sequence as SensorLib configWakeOnMotion) ----------
 static HaloI2c imu;
+static int imu_mg = 150;  // the wake-on-motion threshold, mg (halo_motion_data puts it back)
 static bool imu_on;
 static volatile uint32_t imu_edges;
 // The board wakes on motion only after lying still: pressing BOOT or putting it down in a hand moves it too. A burst
@@ -61,6 +62,7 @@ bool halo_motion_begin(int mg) {
   halo_i2c_write(imu, 0x02, 0x40);                            // CTRL1: address auto-increment, INT pins off
   halo_i2c_write(imu, 0x08, 0x00);                            // CTRL7: sensors off
   halo_i2c_write(imu, 0x03, 0x2C);                            // CTRL2: ±8 g, low-power 128 Hz
+  imu_mg = mg;
   halo_i2c_write(imu, 0x0B, (uint8_t)constrain(mg, 1, 255));  // CAL1_L: threshold, 1 mg per step
   halo_i2c_write(imu, 0x0C, 0x80 | 0x20);                     // CAL1_H: INT1 starting high, skip 32 samples
   halo_i2c_write(imu, 0x0A, 0x08);                            // CTRL9: apply the settings, wait, acknowledge
@@ -87,9 +89,6 @@ uint32_t halo_motion_count() {
   return imu_edges;
 }
 
-// ---------- Steps: the QMI8658's own pedometer (it counts while the board sleeps) ----------
-// Parameters as SensorLib's configPedometer example, in samples scaled from 62.5 Hz to our 128 Hz: two pages of
-// CAL1..CAL4 sent with CTRL9 command 0x0D; its interrupt goes to INT2 (not wired), INT1 stays wake-on-motion
 static bool imu_cmd(uint8_t cmd) {  // CTRL9 command with the handshake (as in halo_motion_begin)
   halo_i2c_write(imu, 0x0A, cmd);
   const bool done = imu_wait(0x2D, 0x80, 0x80);
@@ -97,6 +96,29 @@ static bool imu_cmd(uint8_t cmd) {  // CTRL9 command with the handshake (as in h
   imu_wait(0x2D, 0x80, 0x00);
   return done;
 }
+
+// ---------- Tilt: the accelerometer now, in g (±8 g range: 4096 per g); I2C — not from the frame task ----------
+// In wake-on-motion the chip leaves its data registers at zero (the pedometer still counts): halo_motion_data(true)
+// turns wake-on-motion off for as long as someone reads the tilt, (false) back on — no reset, the steps stay
+bool halo_motion_data(bool on) {
+  if (!imu_on) return false;
+  halo_i2c_write(imu, 0x0B, on ? 0 : (uint8_t)constrain(imu_mg, 1, 255));  // CAL1_L: threshold, 0 — off
+  halo_i2c_write(imu, 0x0C, on ? 0 : 0x80 | 0x20);                        // CAL1_H: INT1 starting high, skip 32
+  return imu_cmd(0x08);
+}
+
+// ---------- (the reading)  (±8 g range: 4096 per g); I2C — not from the frame task ----------
+bool halo_accel(float *x, float *y, float *z) {
+  uint8_t b[6];
+  if (!imu_on || !halo_i2c_read(imu, 0x35, b, 6)) return false;  // AX_L .. AZ_H
+  *x = (int16_t)(b[0] | b[1] << 8) / 4096.0f, *y = (int16_t)(b[2] | b[3] << 8) / 4096.0f;
+  *z = (int16_t)(b[4] | b[5] << 8) / 4096.0f;
+  return true;
+}
+
+// ---------- Steps: the QMI8658's own pedometer (it counts while the board sleeps) ----------
+// Parameters as SensorLib's configPedometer example, in samples scaled from 62.5 Hz to our 128 Hz: two pages of
+// CAL1..CAL4 sent with CTRL9 command 0x0D; its interrupt goes to INT2 (not wired), INT1 stays wake-on-motion
 
 bool halo_steps_begin() {
   if (!imu_on) return false;

@@ -61,6 +61,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .range { display: grid; grid-template-columns: 1fr 48px; gap: 8px; align-items: center; }
 .range input { accent-color: var(--accent); width: 100%; }
 .range output { font-variant-numeric: tabular-nums; text-align: right; color: var(--text); }
+.screen-wrap { display: flex; justify-content: center; }
+#screen { width: 300px; height: 300px; border-radius: 50%; background: #000; cursor: pointer; touch-action: none; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
 .hint { color: var(--dim); font-size: 12px; }
 .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; font-size: 14px; }
@@ -109,7 +111,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 
     <section class="card" data-section="wifi">
       <h2>Wi-Fi</h2>
-      <p class="sub">The watch turns Wi-Fi on only while it needs it (assistant, weather, time) and off when idle. 2.4 GHz networks only.</p>
+      <p class="sub">The watch turns Wi-Fi on only while it needs it (assistant, weather, time) and off when idle. 2.4 GHz networks only. With more than one network set, it uses the strongest one in range.</p>
       <div class="grid">
         <label>Network (SSID)
           <input type="text" data-key="wifi_ssid" list="ssids" autocomplete="off" spellcheck="false">
@@ -117,6 +119,18 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
         </label>
         <label>Password
           <input type="password" data-key="wifi_pass" data-secret autocomplete="new-password" placeholder="unchanged">
+        </label>
+        <label>Network 2 (optional)
+          <input type="text" data-key="wifi_ssid2" list="ssids" autocomplete="off" spellcheck="false">
+        </label>
+        <label>Password 2
+          <input type="password" data-key="wifi_pass2" data-secret autocomplete="new-password" placeholder="unchanged">
+        </label>
+        <label>Network 3 (optional)
+          <input type="text" data-key="wifi_ssid3" list="ssids" autocomplete="off" spellcheck="false">
+        </label>
+        <label>Password 3
+          <input type="password" data-key="wifi_pass3" data-secret autocomplete="new-password" placeholder="unchanged">
         </label>
         <label>Turn off after idle (seconds)
           <input type="number" data-key="net_idle" min="10" max="3600">
@@ -282,6 +296,18 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   </div>
 
   <div class="col">
+    <section class="card">
+      <h2>Screen</h2>
+      <p class="sub">The watch's screen, live. Click to tap it, drag to swipe.</p>
+      <div class="screen-wrap"><canvas id="screen" width="466" height="466"></canvas></div>
+      <div class="actions" style="justify-content:center">
+        <label class="check" style="font-size:13px"><input type="checkbox" id="live"> Live</label>
+        <button id="btn-shot">Refresh</button>
+        <button data-cmd="wake">Wake</button>
+        <button data-cmd="back">Back</button>
+        <button data-cmd="face">Watch face</button>
+      </div>
+    </section>
     <section class="card log-card">
       <div class="log-tools">
         <h2 style="margin:0 8px 0 0">Log</h2>
@@ -386,7 +412,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let writeChain = Promise.resolve();
 function send(line, quiet) {
   if (!writer) { toast('Connect the watch first'); return Promise.resolve(); }
-  if (!quiet) addLog('> ' + line.replace(/^(set (?:wifi_pass|ai_key) ).*/, '$1••••'), 'me');
+  if (!quiet) addLog('> ' + line.replace(/^(set (?:wifi_pass\d?|ai_key) ).*/, '$1••••'), 'me');
   const data = new TextEncoder().encode(line + '\n');
   writeChain = writeChain.then(async () => {
     for (let i = 0; i < data.length; i += 64) {   // small pieces: the watch's USB buffer never overflows
@@ -427,23 +453,37 @@ async function disconnect() {
   setConnected(false);
 }
 
+// The watch's output: text lines, and inside them a screenshot now and then — "SHOT w h", w·h·2 bytes of pixels
+// (RGB565, little-endian), "\nSHOT END sum". So it is read as bytes and only the lines are decoded
+let shotNeed = 0, shotW = 0, shotH = 0, shotBusy = false, shotAt = 0;
 async function readLoop() {
   const dec = new TextDecoder();
-  let buf = '';
+  let buf = new Uint8Array(0);
   while (port?.readable) {
     reader = port.readable.getReader();
     try {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let i;
-        while ((i = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, i).replace(/\r$/, '');
+        const nb = new Uint8Array(buf.length + value.length);
+        nb.set(buf), nb.set(value, buf.length), buf = nb;
+        for (;;) {
+          if (shotNeed) {
+            if (buf.length < shotNeed) break;
+            drawShot(buf.subarray(0, shotNeed));
+            buf = buf.slice(shotNeed), shotNeed = 0, shotBusy = false;
+            continue;
+          }
+          const i = buf.indexOf(10);
+          if (i < 0) break;
+          const line = dec.decode(buf.subarray(0, i)).replace(/\r$/, '');
           buf = buf.slice(i + 1);
+          const m = /^SHOT (\d+) (\d+)$/.exec(line);
+          if (m) { shotW = +m[1], shotH = +m[2], shotNeed = shotW * shotH * 2; continue; }
+          if (line.startsWith('SHOT END')) continue;
           onLine(line);
         }
-        if (buf.length > 100000) buf = buf.slice(-1000);
+        if (!shotNeed && buf.length > 100000) buf = buf.slice(-1000);
       }
     } catch (e) {
       addLog('connection: ' + e.message, 'e');
@@ -454,6 +494,43 @@ async function readLoop() {
   }
   if (port) { toast('The watch was disconnected'); disconnect(); }
 }
+
+function drawShot(px) {
+  const c = $('#screen'), ctx = c.getContext('2d'), img = ctx.createImageData(shotW, shotH), d = img.data;
+  for (let i = 0, j = 0; i < shotW * shotH; i++, j += 4) {
+    const v = px[i * 2] | px[i * 2 + 1] << 8;
+    d[j] = (v >> 11 & 31) * 255 / 31, d[j + 1] = (v >> 5 & 63) * 255 / 63, d[j + 2] = (v & 31) * 255 / 31, d[j + 3] = 255;
+  }
+  c.width = shotW, c.height = shotH;
+  ctx.putImageData(img, 0, 0);
+}
+
+function requestShot() {
+  if (!port || shotBusy) return;
+  shotBusy = true, shotAt = Date.now();
+  send('redraw', true), send('shot', true);
+}
+setInterval(() => {
+  if (shotBusy && Date.now() - shotAt > 8000) shotBusy = false;  // a lost one
+  if ($('#live')?.checked) requestShot();
+}, 1500);
+
+// Click — a tap there; drag — a swipe that way
+(() => {
+  const c = $('#screen');
+  let down = null;
+  const at = e => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * 466 / r.width, (e.clientY - r.top) * 466 / r.height]; };
+  c.addEventListener('pointerdown', e => { down = at(e); });
+  c.addEventListener('pointerup', e => {
+    if (!down || !port) return (down = null);
+    const [x0, y0] = down, [x1, y1] = at(e), dx = x1 - x0, dy = y1 - y0;
+    down = null;
+    if (Math.hypot(dx, dy) < 12) send(`tap ${Math.round(x0)} ${Math.round(y0)}`, true);
+    else send('swipe ' + (Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up')), true);
+    setTimeout(requestShot, 600);
+  });
+  $('#btn-shot').onclick = requestShot;
+})();
 
 navigator.serial?.addEventListener('disconnect', e => { if (e.target === port) disconnect(); });
 

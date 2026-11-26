@@ -17,7 +17,7 @@
 #include <Preferences.h>
 
 struct Cfg {
-  char ssid[33], pass[65];
+  char ssid[33], pass[65], ssid2[33], pass2[65], ssid3[33], pass3[65];  // up to three networks
   char key[128], model[96], voice[32], lang[16];
   char prompt[1200];
   bool search, auto_vad;
@@ -26,6 +26,7 @@ struct Cfg {
   bool fahrenheit, clock24;
   int face_style, face_color;
   bool bt_on;
+  int night;
   int wx_every, net_idle;
 };
 static Cfg cfg;
@@ -60,6 +61,10 @@ struct CfgField {
 static const CfgField CFG_FIELDS[] = {
     {"wifi_ssid", CF_STR, cfg.ssid, sizeof(cfg.ssid), 0, false, ""},
     {"wifi_pass", CF_STR, cfg.pass, sizeof(cfg.pass), 0, true, ""},
+    {"wifi_ssid2", CF_STR, cfg.ssid2, sizeof(cfg.ssid2), 0, false, ""},  // more networks: the strongest is used
+    {"wifi_pass2", CF_STR, cfg.pass2, sizeof(cfg.pass2), 0, true, ""},
+    {"wifi_ssid3", CF_STR, cfg.ssid3, sizeof(cfg.ssid3), 0, false, ""},
+    {"wifi_pass3", CF_STR, cfg.pass3, sizeof(cfg.pass3), 0, true, ""},
     {"ai_key", CF_STR, cfg.key, sizeof(cfg.key), 0, true, ""},
     {"ai_model", CF_STR, cfg.model, sizeof(cfg.model), 0, false, CFG_DEFAULT_MODEL},
     {"ai_voice", CF_STR, cfg.voice, sizeof(cfg.voice), 0, false, "Puck"},
@@ -79,6 +84,7 @@ static const CfgField CFG_FIELDS[] = {
     {"face_style", CF_INT, &cfg.face_style, 0, 5, false, "0"},  // face.h: FACE_STYLE
     {"face_color", CF_INT, &cfg.face_color, 0, 4, false, "0"},  // face.h: FACE_COLOR
     {"bt_on", CF_BOOL, &cfg.bt_on, 0, 0, false, "1"},            // ancs.h: iPhone notifications
+    {"night", CF_INT, &cfg.night, 0, 3, false, "0"},             // face.h: night mode (0 off, 1 22-7, 2 23-6, 3 always)
     {"net_idle", CF_INT, &cfg.net_idle, 10, 3600, false, "60"},
 };
 #define CFG_N (int)(sizeof(CFG_FIELDS) / sizeof(CFG_FIELDS[0]))

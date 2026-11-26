@@ -4,8 +4,8 @@
 //   Timer       — 1 to 60 minutes on a slider; a ring empties as it runs (on the face too), it beeps when done and
 //                 wakes the board for it; a touch or BOOT stops the beeping
 //   Stopwatch   — minutes, seconds and hundredths; it goes on while you are elsewhere
-//   Steps       — today's steps from the motion sensor's pedometer (it counts while the board sleeps), a ring to
-//                 STEPS_GOAL; kept in flash, back to zero at midnight; on the Arcs face too
+//   Steps       — today's steps from the motion sensor's pedometer (it counts while the board sleeps), kept in flash,
+//                 back to zero at midnight: shown on the Arcs face (the app itself is gone)
 // Included from Oriole.ino after settings.h.
 
 // ---------- Text that fits: one line with "…", or wrapped into lines ----------
@@ -667,6 +667,10 @@ static void music_draw() {
 static const HaloScreen MUSIC_SCREEN = {[] { mu_snapshot(), mu.armed = -1; }, music_update, music_layout, music_draw,
                                         false, HALO_HOME_BOTH};
 
+static void open_history() {  // the Gemini screen's History button (assistant.h)
+  halo_nav_open(HISTORY_SCREEN);
+}
+
 // ---------- The face's bits from the iPhone (face.h): the song line, the unread dot, Music over the face ----------
 static const char *face_now_playing(float w) {
   static uint32_t seen = ~0u;
@@ -698,9 +702,6 @@ static void face_open_music(float y) {
 // ---------- Steps ----------
 static int st_day = -1, st_saved_day = -1;  // year * 400 + day of the year
 static uint32_t st_base, st_saved_n, st_written = ~0u;
-static HaloItem st_head, st_big, st_label, st_goal, st_ring;
-static char st_big_s[12], st_goal_s[32];
-static float st_mid_big;
 
 static void steps_begin() {  // after power_build (the motion sensor), after settings_load (se_prefs)
   st_saved_day = se_prefs.getInt("st_day", -1), st_saved_n = se_prefs.getUInt("st_n", 0);
@@ -730,29 +731,6 @@ static void steps_poll(bool now) {  // from loop(): every 2 s; into flash every 
   }
 }
 
-static void steps_layout(const HaloView &v) {
-  const uint32_t n = steps_today;
-  snprintf(st_big_s, sizeof(st_big_s), "%lu", (unsigned long)n);
-  snprintf(st_goal_s, sizeof(st_goal_s), "%d%% of %d", (int)(n * 100 / STEPS_GOAL), STEPS_GOAL);
-  text_mid(st_head, t_title, "Steps", ap_mid_head, CX, 104, 1, TEXT, 1, &halo_black);
-  text_mid(st_big, w_now, st_big_s, st_mid_big, CX, 212, 1, TEXT, 1, &halo_black);
-  text_mid(st_label, t24, "today", ap_mid_t24, CX, 284, 1, DIM, 1, &halo_black);
-  text_mid(st_goal, t20, st_goal_s, ap_mid_t20, CX, 326, 1, 0xF7A8C4, 1, &halo_black);
-  st_head.on_black = st_big.on_black = st_label.on_black = st_goal.on_black = true;
-  halo_view_commit(st_head, v), halo_view_commit(st_big, v), halo_view_commit(st_label, v);
-  halo_view_commit(st_goal, v);
-  st_ring.kind = HI_RING, st_ring.x = st_ring.y = CX, st_ring.r = 220, st_ring.w = 12, st_ring.scale = 1;
-  st_ring.v = fminf(1, n / (float)STEPS_GOAL), st_ring.color = 0xF7A8C4, st_ring.color2 = FACE_TRACK;
-  st_ring.alpha = 1, st_ring.on_black = true;
-  halo_view_commit(st_ring, v);
-}
-
-static void steps_draw() {
-  halo_item_draw(st_ring), halo_item_draw(st_head), halo_item_draw(st_big), halo_item_draw(st_label);
-  halo_item_draw(st_goal);
-}
-static const HaloScreen STEPS_SCREEN = {nullptr, nullptr, steps_layout, steps_draw, false, HALO_HOME_BOTH};
-
 // ---------- Build ----------
 static void apps_build() {
   ap_mid_head = halo_text_mid(t_title, "Timer");
@@ -760,7 +738,6 @@ static void apps_build() {
   ap_mid_t20 = halo_text_mid(t20, "Rings at 0123456789");
   ap_mid_t24 = halo_text_mid(t24, "Hello");
   btn_mid = ap_mid_t24;
-  st_mid_big = halo_text_mid(w_now, "0123456789");
   for (int i = 0; i < WX_PAGES; i++) wc_rows[i] = {nullptr, nullptr, SE_VALUE, nullptr, nullptr, wc_title, wc_subtitle};
   for (int i = 0; i < HIST_N; i++)
     hi_rows[i] = {nullptr, nullptr, SE_VALUE, nullptr, nullptr, [](int k) { return (const char *)hi.t[k]; },

@@ -59,6 +59,7 @@ struct CardList {
   float mid_head;
   HaloItem head_it, bg[CL_MAX], disc[CL_MAX], icon[CL_MAX], title[CL_MAX], sub[CL_MAX];
   HaloItem wifi[CL_MAX][5];  // CL_WIFI / CL_BT rows: the symbol drawn with arcs and lines (the icon font has none)
+  HaloItem drawn[CL_MAX][12];  // IC_* rows (the menu's drawn icons, Oriole.ino)
 };
 static float cl_mid_icon;
 static const char CL_WIFI[] = "wifi", CL_BT[] = "bt";  // as a row's icon: the Wi-Fi or the Bluetooth symbol
@@ -114,8 +115,9 @@ static void cl_layout(CardList &c, const HaloView &v) {
     HaloItem &dc = c.disc[k];
     dc.kind = HI_CIRCLE, dc.x = ix, dc.y = iy, dc.r = 32, dc.scale = s, dc.color = d.color, dc.alpha = d.icon ? ac : 0;
     dc.on_black = true;
-    const bool wifi = d.icon == CL_WIFI, bt = d.icon == CL_BT;
-    text_mid(c.icon[k], ic24, d.icon && !wifi && !bt ? d.icon : "", cl_mid_icon, ix, iy, s, 0x1B1B1F, d.icon ? ac : 0, &dc);
+    const bool wifi = d.icon == CL_WIFI, bt = d.icon == CL_BT, gem = d.icon == IC_GEMINI;
+    drawn_icon(c.drawn[k], gem ? IC_GEMINI : "", ix, iy, s, gem ? ac : 0, v, d.color);
+    text_mid(c.icon[k], ic24, d.icon && !wifi && !bt && !gem ? d.icon : "", cl_mid_icon, ix, iy, s, 0x1B1B1F, d.icon ? ac : 0, &dc);
     for (int i = 0; i < 5; i++) {
       HaloItem &w = c.wifi[k][i];
       w.color = 0x1B1B1F, w.on_black = false, w.alpha = 0;
@@ -143,6 +145,7 @@ static void cl_draw(CardList &c) {
     halo_item_draw(c.bg[k]), halo_item_draw(c.disc[k]), halo_item_draw(c.icon[k]);
     halo_item_draw(c.title[k]), halo_item_draw(c.sub[k]);
     for (auto &w : c.wifi[k]) halo_item_draw(w);
+    for (auto &w : c.drawn[k]) halo_item_draw(w);
   }
 }
 
@@ -167,6 +170,8 @@ static const CardRow WF_ROWS[] = {
      [] { cfg_ui_set("face_color", (cfg.face_color + 1) % 5); }},
     {"Clock", nullptr, SE_VALUE, [] { return cfg.clock24 ? "24-hour" : "12-hour"; },
      [] { cfg_ui_set("clock24", !cfg.clock24); }},
+    {"Night mode", nullptr, SE_VALUE, [] { return NIGHT_NAME[constrain(cfg.night, 0, 3)]; },
+     [] { cfg_ui_set("night", (cfg.night + 1) % 4); }},
 };
 static CardList &wf_list = cl_new("Watch face", WF_ROWS, sizeof(WF_ROWS) / sizeof(WF_ROWS[0]));
 CL_SCREEN(WATCHFACE_SCREEN, wf_list);
@@ -201,7 +206,9 @@ static void wi_refresh() {
   at = millis() | 1;
   {
     CfgLock l;
-    strlcpy(wi_ssid, *cfg.ssid ? cfg.ssid : "Not set", sizeof(wi_ssid));
+    const int more = (cfg.ssid2[0] != 0) + (cfg.ssid3[0] != 0);
+    if (!*cfg.ssid && !more) strcpy(wi_ssid, "Not set");
+    else snprintf(wi_ssid, sizeof(wi_ssid), more ? "%s and %d more" : "%s", cfg.ssid, more);
     snprintf(wi_idle, sizeof(wi_idle), "%d s without use", cfg.net_idle);
   }
   const uint8_t st = net_state;
@@ -209,6 +216,7 @@ static void wi_refresh() {
                                    "Set up in the web controller"};
   strlcpy(wi_status, ST[st], sizeof(wi_status));
   if (st == NET_UP) {
+    strlcpy(wi_ssid, WiFi.SSID().c_str(), sizeof(wi_ssid));  // the one in use
     const int r = WiFi.RSSI();
     snprintf(wi_signal, sizeof(wi_signal), "%s, %d dBm",
              r >= -55 ? "Excellent" : r >= -67 ? "Good" : r >= -75 ? "Fair" : r >= -85 ? "Weak" : "Very weak", r);
@@ -257,7 +265,7 @@ static const CardRow AS_ROWS[] = {
     {"Google Search", nullptr, SE_VALUE, [] { return cfg.search ? "On: answers can use the web" : "Off"; },
      [] { cfg_ui_set("ai_search", !cfg.search); }},
 };
-static CardList &asst_list = cl_new("Assistant", AS_ROWS, sizeof(AS_ROWS) / sizeof(AS_ROWS[0]));
+static CardList &asst_list = cl_new("Gemini", AS_ROWS, sizeof(AS_ROWS) / sizeof(AS_ROWS[0]));
 CL_SCREEN(ASSISTANT_SET_SCREEN, asst_list);
 
 // ---------- Bluetooth: iPhone notifications (ancs.h) ----------
@@ -284,7 +292,7 @@ static const CardRow SE_ROWS[] = {
     {"Watch face", "", 0xA8C7FA, [] { return "style, color, 12/24 h"; }, [] { halo_nav_open(WATCHFACE_SCREEN); }},
     {"Display", "", 0xFDD663, [] { return "brightness"; }, [] { halo_nav_open(DISPLAY_SCREEN); }},
     {"Sound", "", 0xF6AEA9, [] { return "volume, microphone"; }, [] { halo_nav_open(SOUND_SCREEN); }},
-    {"Assistant", "\uf130", 0x8AB4F8, [] { return "voice, language"; }, [] { halo_nav_open(ASSISTANT_SET_SCREEN); }},
+    {"Gemini", IC_GEMINI, 0xA8C7FA, [] { return "voice, language"; }, [] { halo_nav_open(ASSISTANT_SET_SCREEN); }},
     {"Bluetooth", CL_BT, 0x8AB4F8, [] { return bt_state == BT_READY ? "iPhone connected" : "iPhone notifications"; },
      [] { halo_nav_open(BT_SCREEN); }},
     {"Wi-Fi", CL_WIFI, 0x7FCFFF, [] { return "network and status"; }, [] { halo_nav_open(WIFI_SCREEN); }},

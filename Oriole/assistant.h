@@ -23,6 +23,11 @@
 #define AS_WRAP_W 312.0f  // caption width: what fits at the lowest line, with a margin to the screen's edge
 
 static HaloItem as_clock, as_glow, as_orb, as_mic, as_status, as_you, as_line[AS_LINES], as_dot, as_send;
+static HaloItem as_hist_bg, as_hist_t;  // the History button (apps.h), while nothing is going on
+static Press as_hist_p;
+static bool as_hist_armed;
+static void open_history();             // apps.h
+#define AS_HIST_Y 430.0f
 static char as_status_s[96], as_you_s[96], as_line_s[AS_LINES][96];
 static float as_mid_status, as_mid_you, as_mid_line, as_mid_mic;
 static HaloSpring as_size, as_glow_k;  // the orb's size (0..1 of the extra) and the glow
@@ -61,7 +66,7 @@ static void as_status_text(char *s, size_t n) {
   const char *to = ai_net_wait ? "Wi-Fi" : "Gemini";
   if (ai_hold) snprintf(s, n, ai_state == AI_CONNECTING ? "Listening… (connecting to %s)" : "Listening…", to);
   else if (ai_state == AI_CONNECTING) snprintf(s, n, "Connecting to %s…", to);
-  else if (as_sending()) snprintf(s, n, "Sending… %d%%", (int)(as_send_progress() * 100));
+  else if (as_sending()) snprintf(s, n, "Sending…");  // the ring around the orb shows how far
   else if (ai_state == AI_THINKING) snprintf(s, n, "Thinking…");
   else if (as_buffering()) snprintf(s, n, "Loading the answer…");
   else if (ai_state == AI_SPEAKING) snprintf(s, n, "Speaking (BOOT interrupts)");
@@ -220,7 +225,31 @@ static void assistant_layout(const HaloView &v) {
   }
 }
 
+static bool as_quiet() {  // idle: the History button shows
+  return !ai_hold && !ai_busy();  // under the last answer's lines: they stay
+}
+
+static void assistant_update(float dt) {
+  const HaloFinger &f = halo_finger;
+  if (f.pressed) as_hist_armed = as_quiet() && !f.owner && fabsf(f.x0 - CX) < 80 && fabsf(f.y0 - AS_HIST_Y) < 26;
+  if (f.dragging) as_hist_armed = false;
+  if (f.tap && as_hist_armed) open_history();
+  press_update(as_hist_p, as_hist_armed && f.down, dt);
+  if (!f.down) as_hist_armed = false;
+}
+
+static void assistant_hist_layout(const HaloView &v) {
+  const float a = as_quiet() ? 1 : 0, p = halo_clamp01(as_hist_p.s.x);
+  as_hist_bg.kind = HI_RRECT, as_hist_bg.x = CX, as_hist_bg.y = AS_HIST_Y, as_hist_bg.w = 150, as_hist_bg.h = 48;
+  as_hist_bg.r = 24 * (1 - 0.3f * p), as_hist_bg.scale = 1, as_hist_bg.color = CARD_HI, as_hist_bg.alpha = a;
+  as_hist_bg.on_black = true;
+  halo_view_commit(as_hist_bg, v);
+  text_mid(as_hist_t, t20, "History", as_mid_status, CX, AS_HIST_Y, 1, TEXT, a, &as_hist_bg);
+  halo_view_commit(as_hist_t, v);
+}
+
 static void assistant_draw() {
+  halo_item_draw(as_hist_bg), halo_item_draw(as_hist_t);
   halo_item_draw(as_clock);
   halo_item_draw(as_glow), halo_item_draw(as_send), halo_item_draw(as_orb), halo_item_draw(as_mic);
   halo_item_draw(as_status), halo_item_draw(as_you);
@@ -229,7 +258,8 @@ static void assistant_draw() {
 
 // Elsewhere: a dot at the bottom edge while the assistant is busy (laid out after halo_nav_update)
 static void assistant_overlay_layout() {
-  const bool show = ai_busy() && !as_on_screen;
+  const bool chime = (int32_t)(millis() - ai_chime_until) < 0;  // a timer, a ding or a game's tone: not the assistant
+  const bool show = ai_busy() && !chime && !as_on_screen;
   as_on_screen = false;  // the screen sets it again in its layout next frame
   const float s = halo_clamp01(as_size.x);
   as_dot.kind = HI_CIRCLE, as_dot.x = CX, as_dot.y = 446, as_dot.r = 7 + 4 * s, as_dot.scale = 1;
@@ -242,7 +272,9 @@ static void assistant_overlay_draw() {
 }
 
 // No gestures of its own: to the face either way, back — from the left edge (or up from the bottom over the face)
-static const HaloScreen ASSISTANT = {nullptr, nullptr, assistant_layout, assistant_draw, false, HALO_HOME_BOTH};
+static const HaloScreen ASSISTANT = {nullptr, assistant_update,
+                                     [](const HaloView &v) { assistant_layout(v), assistant_hist_layout(v); },
+                                     assistant_draw, false, HALO_HOME_BOTH};
 
 static void as_open() {
   if (halo_nav_on_face()) halo_nav_face_open(ASSISTANT, HALO_FX_FADE, CX, AS_ORB_Y, 2 * AS_ORB_R, 2 * AS_ORB_R);

@@ -128,11 +128,19 @@ static void ai_fail(const char *fmt, ...) {
 static volatile uint32_t ai_prebuf = AI_PREBUF;
 static volatile uint32_t ai_gaps;  // the reply ran dry mid-turn (a gap is a click)
 static volatile uint32_t ai_chime_until;  // the timer's alarm (apps.h): beeps instead of the reply until then (millis)
-static volatile uint8_t ai_chime_mode;    // 0 — the alarm, 1 — a notification's ding (apps.h)
+static volatile uint8_t ai_chime_mode;    // 0 — the alarm, 1 — a notification's ding (apps.h), 2 — a tone (games.h)
+static volatile uint16_t ai_tone_hz = 440;  // mode 2's pitch
 
 static int ai_chime(int16_t *out, int n) {  // two short 880 Hz beeps a second, the edges softened (no clicks)
   static uint32_t pos;  // samples since the chime started
   if ((int32_t)(millis() - ai_chime_until) >= 0) return pos = 0, 0;
+  if (ai_chime_mode == 2) {  // a tone at ai_tone_hz until ai_chime_until, its start softened
+    for (int i = 0; i < n; i++, pos++) {
+      const float env = fminf(1, pos / 150.0f);
+      out[i] = (int16_t)(7000 * env * sinf(2 * HALO_PI * ai_tone_hz * (pos % AI_RATE) / AI_RATE));
+    }
+    return n;
+  }
   if (ai_chime_mode == 1) {  // the ding: 1320 Hz, then 1760 Hz, 90 ms each
     for (int i = 0; i < n; i++, pos++) {
       const uint32_t t = pos, len = AI_RATE * 9 / 100, gap = AI_RATE * 11 / 100;

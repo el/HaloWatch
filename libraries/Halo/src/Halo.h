@@ -120,6 +120,8 @@ void halo_stay_awake(bool hold);   // не засыпать по-настоящ�
 // положат и снова не возьмут.
 // Звать в setup (ждёт датчик до 0,5 с); других данных датчик в этом режиме не даёт. Нужен тач (cfg.touch): шина его
 bool halo_motion_begin(int mg = 150);
+bool halo_motion_data(bool on);  // true: wake-on-motion off, so halo_accel has data; false: back on (I2C)
+bool halo_accel(float *x, float *y, float *z);  // the accelerometer, g (after halo_motion_begin; not from the frame task)
 bool halo_steps_begin();           // the motion sensor's pedometer (after halo_motion_begin)
 uint32_t halo_steps();             // steps since halo_steps_begin or halo_steps_reset (I2C: not from the frame task)
 void halo_steps_reset();

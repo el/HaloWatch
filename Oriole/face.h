@@ -117,6 +117,34 @@ static void face_style_targets() {
   fc_dy.target = fc_style_dy[st], fc_date_a.target = st != FS_TIME, fc_pill_a.target = st == FS_CLASSIC;
 }
 
+// ---------- Night mode (the night setting): the face in deep red, images hidden, the brightness capped (display.h) ----------
+static bool fc_night_on;  // now (face_tick, by the hour)
+static uint32_t fnc(uint32_t c) {  // a color for the night: its brightness in red
+  if (!fc_night_on) return c;
+  const uint32_t l = ((c >> 16 & 255) * 77 + (c >> 8 & 255) * 150 + (c & 255) * 29) >> 8;
+  return (l * 9 / 10) << 16 | (l / 9) << 8 | l / 13;
+}
+static void fc_commit(HaloItem &it, const HaloView &v) {  // the face's commits: night colors first
+  if (fc_night_on) it.color = fnc(it.color), it.color2 = fnc(it.color2), it.alpha *= it.kind == HI_IMAGE ? 0 : 1;
+  halo_view_commit(it, v);
+}
+static bool face_night_window() {  // the setting against the local hour: 1 — 22–7, 2 — 23–6, 3 — always
+  if (!halo_clock_valid() || !cfg.night) return false;
+  if (cfg.night == 3) return true;
+  const time_t t = time(nullptr) + fc_offset;
+  struct tm tm;
+  localtime_r(&t, &tm);
+  return cfg.night == 1 ? tm.tm_hour >= 22 || tm.tm_hour < 7 : tm.tm_hour >= 23 || tm.tm_hour < 6;
+}
+static const char *const NIGHT_NAME[4] = {"Off", "22:00 to 7:00", "23:00 to 6:00", "Always"};
+
+// ---------- The picker: a long press on the face; swipe sideways for another style, tap to keep it ----------
+static HaloSpring fc_pick;  // 0 — the face, 1 — shrunk in the picker
+static bool fc_picking;
+static uint32_t fc_pick_at;  // the last touch in the picker
+static HaloItem fc_pick_ring, fc_pick_name, fc_pick_dot[FS_N];
+static float fc_mid_name;
+
 // The hands at (cx, cy): hour and minute in `col`, the second hand only with `seconds`; a = 0 hides them all
 static void face_hands(float cx, float cy, uint32_t col, bool seconds, float a, const HaloView &v) {
   const bool ok = fc_min >= 0;
@@ -130,13 +158,13 @@ static void face_hands(float cx, float cy, uint32_t col, bool seconds, float a, 
     h.kind = HI_LINE, h.x = cx - sx * TAIL[i], h.y = cy - cy_ * TAIL[i], h.w = cx + sx * LEN[i], h.h = cy + cy_ * LEN[i];
     h.r = HW[i], h.scale = 1, h.color = i == 2 ? FACE_SECOND : col, h.on_black = false;
     h.alpha = ok && (i < 2 || seconds) ? a : 0;
-    halo_view_commit(h, v);
+    fc_commit(h, v);
   }
   for (int i = 0; i < 2; i++) {  // the cap: a coral dot with a black middle
     HaloItem &c = fc_cap[i];
     c.kind = HI_CIRCLE, c.x = cx, c.y = cy, c.r = i ? 3 : 9, c.scale = 1, c.on_black = false;
     c.color = i ? 0 : seconds ? FACE_SECOND : col, c.alpha = ok ? a : 0;
-    halo_view_commit(c, v);
+    fc_commit(c, v);
   }
 }
 
@@ -188,6 +216,7 @@ static void face_build() {
   fc_st_date_y = top + hd / 2, fc_st_hh_y = top + hd + 24 + ht / 2, fc_st_mm_y = fc_st_hh_y + ht + 18;
   fc_mid_bat = halo_text_mid(t20, "Battery 0123456789%");
   fc_mid_day = halo_text_mid(t24, "THU 0123456789");
+  fc_mid_name = halo_text_mid(t24, "Classic");
   face_style_targets();
   halo_spring_set(fc_dy, fc_dy.target), halo_spring_set(fc_date_a, fc_date_a.target);
   halo_spring_set(fc_pill_a, fc_pill_a.target);
@@ -233,6 +262,8 @@ static void face_tick(float dt) {
   face_style_targets();
   halo_spring_run(fc_dy, K_M3_DEFAULT, dt), halo_spring_run(fc_date_a, K_M3_DEFAULT, dt);
   halo_spring_run(fc_pill_a, K_M3_DEFAULT, dt);
+  halo_spring_run(fc_pick, K_M3_DEFAULT, dt);
+  if (now_check) fc_night_on = face_night_window();
   if (fc_icon_t.x == 1 && fc_icon_t.v == 0) fc_icon_old = nullptr;
 }
 
@@ -250,14 +281,30 @@ static void face_open_weather() {
 
 // Only while the face is on screen and still: the pill opens the Weather screen
 static void face_update(float) {
-  const HaloFinger &f = halo_finger;
+  HaloFinger &f = halo_finger;
+  if (!fc_picking && f.down && !f.dragging && !f.owner && halo_ms() - f.t0 > 600) {  // a long press: the picker
+    fc_picking = true, fc_pick.target = 1, fc_pick_at = millis();
+    halo_finger_claim(&fc_pick);
+    return;
+  }
+  if (fc_picking) {
+    if (f.pressed) halo_finger_claim(&fc_pick), fc_pick_at = millis();
+    if (f.released && f.owner == &fc_pick && f.dragging && f.horiz && fabsf(f.x - f.x0) > 50)  // sideways: another
+      cfg_ui_set("face_style", (face_style() + (f.x < f.x0 ? 1 : FS_N - 1)) % FS_N);
+    else if (f.tap || millis() - fc_pick_at > 10000) fc_picking = false, fc_pick.target = 0;  // keep it
+    return;
+  }
   if (f.tap && !f.owner && fc_song_y > 0 && fabsf(f.y - fc_song_y) < 24 && fabsf(f.x - CX) < 150)
     return face_open_music(fc_song_y);  // the song line opens Music
   if (!f.tap || f.owner || fc_pill_a.target < 1) return;  // no pill in this style
   if (fabsf(f.x - CX) < pill_width() / 2 + 10 && fabsf(f.y - PILL_Y - fc_dy.x) < PILL_H / 2 + 10) face_open_weather();
 }
 
-static void face_layout(const HaloView &v) {
+static void face_layout(const HaloView &v0) {
+  const float pk = halo_clamp01(fc_pick.x);
+  HaloView v = v0;  // in the picker the whole face shrinks into its ring
+  v.s *= 1 - 0.32f * pk;
+  if (fabsf(fc_pick.v) > 0.01f) halo_subpixel = true;
   const int st = face_style();
   const uint32_t col = FACE_COLOR[constrain(cfg.face_color, 0, 4)];
   const float dy = fc_dy.x, da = halo_clamp01(fc_date_a.x), pa = halo_clamp01(fc_pill_a.x);
@@ -266,13 +313,13 @@ static void face_layout(const HaloView &v) {
   HaloView vd = v;
   if (st == FS_ARCS) vd.s *= 0.84f;
   const float date_y = st == FS_STACKED ? fc_st_date_y : FACE_DATE_Y + dy;
-  halo_roll_layout(r_date, CX, date_y, FACE_DATE, st != FS_ANALOG && da > 0.01f ? da : 0, &halo_black, vd);
+  halo_roll_layout(r_date, CX, date_y, fnc(FACE_DATE), st != FS_ANALOG && da > 0.01f ? da : 0, &halo_black, vd);
   const bool digital = st <= FS_TIME || st == FS_ARCS;
-  halo_roll_layout(r_time, CX, FACE_TIME_Y + dy, col, digital ? 1 : 0, &halo_black, vd);
+  halo_roll_layout(r_time, CX, FACE_TIME_Y + dy, fnc(col), digital ? 1 : 0, &halo_black, vd);
   // Stacked: the hours in the clock's color, the minutes white (gray under white hours)
   const float sa = st == FS_STACKED ? 1 : 0;
-  halo_roll_layout(r_hh, CX, fc_st_hh_y, col, sa, &halo_black, v);
-  halo_roll_layout(r_mm, CX, fc_st_mm_y, col == FACE_WHITE ? 0x9AA0A6 : FACE_WHITE, sa, &halo_black, v);
+  halo_roll_layout(r_hh, CX, fc_st_hh_y, fnc(col), sa, &halo_black, v);
+  halo_roll_layout(r_mm, CX, fc_st_mm_y, fnc(col == FACE_WHITE ? 0x9AA0A6 : FACE_WHITE), sa, &halo_black, v);
   // Analog: hour ticks (the quarters longer and brighter), then the hands over them
   const float aa = st == FS_ANALOG ? 1 : 0;
   for (int i = 0; i < 12; i++) {
@@ -281,11 +328,11 @@ static void face_layout(const HaloView &v) {
     const float an = i * HALO_PI / 6, sx = sinf(an), sy = -cosf(an), r0 = q ? 192 : 204, r1 = 220;
     t.kind = HI_LINE, t.x = CX + sx * r0, t.y = CX + sy * r0, t.w = CX + sx * r1, t.h = CX + sy * r1;
     t.r = q ? 3.5f : 2, t.scale = 1, t.color = q ? 0xE3E3E3 : 0x8E9099, t.on_black = true, t.alpha = aa;
-    halo_view_commit(t, v);
+    fc_commit(t, v);
   }
   text_mid(fc_day, t24, fc_day_s, fc_mid_day, CX + 118, CX, 1, FACE_DATE, aa, &halo_black);  // under the hands
   fc_day.on_black = true;
-  halo_view_commit(fc_day, v);
+  fc_commit(fc_day, v);
   face_hands(CX, CX, col, true, aa, v);
   // Arcs: the seconds outside, the battery inside, its level under the clock
   const float ra = st == FS_ARCS ? 1 : 0;
@@ -295,21 +342,21 @@ static void face_layout(const HaloView &v) {
   rs.r = 222, rs.w = 8, rs.v = fc_sec / 60.0f, rs.color = col, rs.color2 = FACE_TRACK, rs.alpha = ra;
   rb.r = 206, rb.w = 6, rb.v = b.ok && b.percent >= 0 ? b.percent / 100.0f : 0, rb.color = 0x5CF08A;
   rb.color2 = FACE_TRACK, rb.alpha = ra, rs.on_black = rb.on_black = true;
-  halo_view_commit(rs, v), halo_view_commit(rb, v);
+  fc_commit(rs, v), fc_commit(rb, v);
   if (b.ok && b.percent >= 0) snprintf(fc_bat_s, sizeof(fc_bat_s), "Battery %d%%", b.percent);
   else strcpy(fc_bat_s, "Battery --");
   text_mid(fc_bat, t20, fc_bat_s, fc_mid_bat, CX, FACE_TIME_Y + dy + fc_digit_h / 2 + 40, 1, DIM, ra, &halo_black);
   fc_bat.on_black = true;
-  halo_view_commit(fc_bat, vd);
+  fc_commit(fc_bat, vd);
   // Arcs: the steps — a third ring inside, the count over the date
   HaloItem &rst = fc_ring_st;
   rst.kind = HI_RING, rst.x = rst.y = CX, rst.scale = 1, rst.r = 192, rst.w = 6, rst.color = 0xF7A8C4;
   rst.v = fminf(1, steps_today / (float)STEPS_GOAL), rst.color2 = FACE_TRACK, rst.alpha = ra, rst.on_black = true;
-  halo_view_commit(rst, v);
+  fc_commit(rst, v);
   snprintf(fc_steps_s, sizeof(fc_steps_s), "%lu steps", (unsigned long)steps_today);
   text_mid(fc_steps, t20, fc_steps_s, fc_mid_bat, CX, FACE_DATE_Y + dy - 40, 1, DIM, ra, &halo_black);
   fc_steps.on_black = true;
-  halo_view_commit(fc_steps, vd);
+  fc_commit(fc_steps, vd);
   // Any style: what plays on the iPhone, one dim line where the style leaves room (a tap opens Music)
   static const float SONG_Y[FS_N] = {428, 402, 402, 342, 66, 0};
   const float sy = st == FS_ARCS ? FACE_TIME_Y + dy + fc_digit_h / 2 + 68 : SONG_Y[st];
@@ -317,23 +364,23 @@ static void face_layout(const HaloView &v) {
   fc_song_y = song ? (st == FS_ARCS ? halo_view_y(vd, sy) : sy) : -1;
   text_mid(fc_song, t20, song ? song : "", fc_mid_bat, CX, sy, 1, 0xA8C7FA, song ? 1 : 0, &halo_black);
   fc_song.on_black = true;
-  halo_view_commit(fc_song, st == FS_ARCS ? vd : v);
+  fc_commit(fc_song, st == FS_ARCS ? vd : v);
   // New notifications: a blue dot at the bottom edge, until the Notifications screen is opened
   fc_unread.kind = HI_CIRCLE, fc_unread.x = CX, fc_unread.y = 457, fc_unread.r = 6, fc_unread.scale = 1;
   fc_unread.color = 0x8AB4F8, fc_unread.alpha = face_unread() > 0 ? 1 : 0, fc_unread.on_black = true;
-  halo_view_commit(fc_unread, v);
+  fc_commit(fc_unread, v);
   // Any style: a running timer as a thin amber ring at the very edge (in 1/360 steps: not redrawn every frame)
   const float tf = timer_face_fraction();
   fc_timer.kind = HI_RING, fc_timer.x = fc_timer.y = CX, fc_timer.scale = 1, fc_timer.r = 229, fc_timer.w = 4;
   fc_timer.v = floorf(fmaxf(tf, 0) * 360) / 360, fc_timer.color = 0xFFC56B, fc_timer.color2 = FACE_TRACK;
   fc_timer.alpha = tf >= 0 ? 1 : 0, fc_timer.on_black = true;
-  halo_view_commit(fc_timer, v);
+  fc_commit(fc_timer, v);
   // The pill: as wide as its text right now (it follows the temperature's width spring)
   const float w = pill_width(), left = CX - w / 2;
   fc_pill.kind = HI_RRECT, fc_pill.x = CX, fc_pill.y = PILL_Y + dy, fc_pill.w = w, fc_pill.h = PILL_H;
   fc_pill.r = PILL_H / 2, fc_pill.color = FACE_PILL, fc_pill.on_black = true, fc_pill.scale = 1;
   fc_pill.alpha = pa > 0.01f ? pa : 0;
-  halo_view_commit(fc_pill, v);
+  fc_commit(fc_pill, v);
   // The icon: the new one grows from 0.5 with an overshoot and rises a little, the old one shrinks, rises and fades
   // out quickly (gone by a third of the way: two half-transparent icons on top of each other look muddy)
   const float t = fc_icon_t.x, ix = left + PILL_ICON;
@@ -343,14 +390,33 @@ static void face_layout(const HaloView &v) {
   in.alpha = halo_clamp01((t - 0.12f) * 1.8f) * fc_pill.alpha;
   out.image = fc_icon_old, out.x = ix, out.y = PILL_ICON_Y + dy - t * FACE_ICON_RISE, out.scale = 1 - 0.5f * t;
   out.alpha = fc_icon_old ? halo_clamp01(1 - t * 3) * fc_pill.alpha : 0;
-  halo_view_commit(out, v), halo_view_commit(in, v);
-  halo_roll_layout(r_temp, left + fc_pen, PILL_TEMP_Y + dy, FACE_WHITE, fc_pill.alpha, &fc_pill, v);
+  fc_commit(out, v), fc_commit(in, v);
+  halo_roll_layout(r_temp, left + fc_pen, PILL_TEMP_Y + dy, fnc(FACE_WHITE), fc_pill.alpha, &fc_pill, v);
+}
+
+static void face_pick_layout(const HaloView &v) {  // over the shrunk face: a ring, the style's name, dots
+  const float a = halo_clamp01(fc_pick.x);
+  fc_pick_ring.kind = HI_RING, fc_pick_ring.x = fc_pick_ring.y = CX, fc_pick_ring.r = 233 * 0.68f + 8;
+  fc_pick_ring.w = 4, fc_pick_ring.v = 1, fc_pick_ring.scale = 1, fc_pick_ring.color = fc_pick_ring.color2 = 0x8AB4F8;
+  fc_pick_ring.alpha = a > 0.02f ? a : 0, fc_pick_ring.on_black = true;
+  halo_view_commit(fc_pick_ring, v);
+  text_mid(fc_pick_name, t24, FACE_STYLE[face_style()], fc_mid_name, CX, 418, 1, TEXT, a > 0.02f ? a : 0, &halo_black);
+  fc_pick_name.on_black = true;
+  halo_view_commit(fc_pick_name, v);
+  for (int i = 0; i < FS_N; i++) {
+    HaloItem &d = fc_pick_dot[i];
+    d.kind = HI_CIRCLE, d.x = CX + (i - (FS_N - 1) / 2.0f) * 16, d.y = 446, d.r = i == face_style() ? 4.5f : 3;
+    d.scale = 1, d.color = i == face_style() ? TEXT : 0x5F6368, d.alpha = a > 0.02f ? a : 0, d.on_black = true;
+    halo_view_commit(d, v);
+  }
 }
 
 static void face_draw() {
   halo_item_draw(fc_ring_s), halo_item_draw(fc_ring_b), halo_item_draw(fc_bat);
   halo_item_draw(fc_ring_st), halo_item_draw(fc_steps), halo_item_draw(fc_timer);
   halo_item_draw(fc_song), halo_item_draw(fc_unread);
+  halo_item_draw(fc_pick_ring), halo_item_draw(fc_pick_name);
+  for (auto &d : fc_pick_dot) halo_item_draw(d);
   for (auto &t : fc_tick) halo_item_draw(t);
   halo_item_draw(fc_day);
   halo_roll_draw(r_date), halo_roll_draw(r_time), halo_roll_draw(r_hh), halo_roll_draw(r_mm);

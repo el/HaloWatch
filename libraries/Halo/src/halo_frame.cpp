@@ -232,9 +232,9 @@ static volatile bool shot_req, shot_ready, bench_ring_req;
 
 static void render_full(uint16_t *dst, bool swap) {  // dst — 466×466 в PSRAM
   // Пачка — во внутренней памяти, как у настоящего кадра: иначе замер bench врёт (запись в PSRAM медленная)
-  static uint16_t *tmp;
+  static uint16_t *tmp;  // in PSRAM: kept for good, and internal RAM is for Wi-Fi and Bluetooth (bench reads slower)
+  if (!tmp) tmp = (uint16_t *)heap_caps_malloc(HALO_ROWS * HALO_W * 2, MALLOC_CAP_SPIRAM);
   if (!tmp) tmp = (uint16_t *)heap_caps_malloc(HALO_ROWS * HALO_W * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  if (!tmp) tmp = (uint16_t *)heap_caps_malloc(HALO_ROWS * HALO_W * 2, MALLOC_CAP_SPIRAM);  // internal RAM is short
   if (!tmp) return;
   const HaloBand saved = hb;
   for (int y = 0; y < HALO_H; y += HALO_ROWS) {

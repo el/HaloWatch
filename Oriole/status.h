@@ -12,7 +12,7 @@ static void status_cmd(const char *) {
   j.key("wifi"), j.str(NET_NAME[net_state]);
   {
     CfgLock l;
-    j.key("ssid"), j.str(cfg.ssid);
+    j.key("ssid"), j.str(net_state == NET_UP ? WiFi.SSID().c_str() : cfg.ssid);  // the network in use
   }
   if (net_state == NET_UP) {
     j.key("ip"), j.str(WiFi.localIP().toString().c_str());

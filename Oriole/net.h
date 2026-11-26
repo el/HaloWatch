@@ -156,24 +156,40 @@ static void net_task(void *) {
           break;
         }
         if (net_state == NET_FAILED && (int32_t)(now - retry_at) < 0 && !net_poked) break;
+        {  // a scope of its own: the declarations below, inside a case
+        char nets[3][2][65];  // the networks set: [i][0] the name, [i][1] the password
+        int nn = 0;
         {
           CfgLock l;
-          strlcpy(ssid, cfg.ssid, sizeof(ssid)), strlcpy(pass, cfg.pass, sizeof(pass));
+          const char *S[3][2] = {{cfg.ssid, cfg.pass}, {cfg.ssid2, cfg.pass2}, {cfg.ssid3, cfg.pass3}};
+          for (auto &n : S)
+            if (*n[0]) strlcpy(nets[nn][0], n[0], 33), strlcpy(nets[nn][1], n[1], 65), nn++;
         }
         net_poked = false;
-        if (!*ssid) {
+        if (!nn) {
           net_state = NET_NO_SSID;
           break;
         }
         if (!held) halo_stay_awake(true), held = true;
         bt_radio(true);  // Bluetooth stops first: the two do not fit in internal RAM together
         WiFi.mode(WIFI_STA);
+        int pick = 0;  // several networks: a quick scan (~1.3 s), the strongest one in range; one — straight to it
+        if (nn > 1) {
+          const int found = WiFi.scanNetworks(false, false, false, 100);
+          int best = -1000;
+          for (int k = 0; k < found; k++)
+            for (int i = 0; i < nn; i++)
+              if (WiFi.SSID(k) == nets[i][0] && WiFi.RSSI(k) > best) best = WiFi.RSSI(k), pick = i;
+          WiFi.scanDelete();
+        }
+        strlcpy(ssid, nets[pick][0], sizeof(ssid)), strlcpy(pass, nets[pick][1], sizeof(pass));
         WiFi.setSleep(false);  // streaming audio: no modem sleep (the radio is on only while it is used anyway)
         WiFi.begin(ssid, pass);
         LOG("wifi: connecting to %s (users %d, poked %d, last use %lu ms ago)\n", ssid, net_users, (int)poked,
             (unsigned long)(now - net_last_ms));
         net_state = NET_CONNECTING, since = now;
         break;
+        }
       case NET_CONNECTING:
         if (WiFi.status() == WL_CONNECTED) {
           net_state = NET_UP;

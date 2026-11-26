@@ -21,8 +21,8 @@
 // What comes from where (lib/Halo, docs/halo.md): the list — halo_list_*, transitions — halo_nav_*, arcs — HI_ARC, the
 // time along the arc — halo_text_arc, sound and the microphones — halo_audio_*, halo_mic_*. Only what changed goes to
 // the display: at rest no frames are drawn at all.
-// Commands: face / face off (the face / the gallery), open N (0 Assistant, 1 Notifications, 2 Music, 3 History, 4 Weather, 5 World clock,
-// 6 Timer, 7 Stopwatch, 8 Steps, 9 Settings), back, tap/press/
+// Commands: face / face off (the face / the gallery), open N (0 Gemini, 1 Notifications, 2 Music, 3 Weather, 4 World clock, 5 Timer,
+// 6 Stopwatch, 7 Level, 8 Games, 9 Settings), back, tap/press/
 // swipe/drag/fling (an artificial finger); the controller's: cfg, set, status, time, wifi, weather, ai, ask, mic test,
 // reboot; instruments — trace, rec, shot, prof, sys, log.
 #pragma GCC optimize("O3", "fast-math")
@@ -76,16 +76,17 @@ struct Entry {
   uint32_t color;
 };
 static const char IC_CLOCK[] = "clock", IC_WATCH[] = "stopwatch", IC_LIST[] = "list", IC_TIMER[] = "timer";  // drawn
+static const char IC_GEMINI[] = "gemini", IC_LEVEL[] = "level", IC_GAMES[] = "games";  // drawn too
 static const Entry ENTRIES[] = {  // in the order of APP_SCREENS (below the includes)
-    {"Assistant", "hold BOOT to talk", "\uf130", 0x8AB4F8},
+    {"Gemini", "hold BOOT to talk", IC_GEMINI, 0xA8C7FA},
     {"Notifications", "from your iPhone", "\uf0f3", 0x8AB4F8},
     {"Music", "what plays on your iPhone", "\uf001", 0xF28B82},
-    {"History", "past questions", IC_LIST, 0xC9B6FF},
     {"Weather", "now and hourly", "\uf185", 0xFFB030},
     {"World clock", "your cities", IC_CLOCK, 0x7FCFFF},
     {"Timer", "with an alarm", IC_TIMER, 0xFFC56B},
     {"Stopwatch", "to the hundredth", IC_WATCH, 0xF6AEA9},
-    {"Steps", "today's count", "\uf004", 0xF7A8C4},
+    {"Level", "tilt to see", IC_LEVEL, 0x8BE3B9},
+    {"Games", "six to play", IC_GAMES, 0xF7A8C4},
     {"Settings", "face, sound, Wi-Fi", "\uf013", 0xA8C7FA},
 };
 #define N_ENTRIES (int)(sizeof(ENTRIES) / sizeof(ENTRIES[0]))
@@ -112,17 +113,18 @@ static char time_str[8] = "--:--";
 static int clock_h = -1, clock_m = -1;
 static HaloItem m_head, m_time, m_sc[3];
 struct MenuDrawn {  // the cards' items, in PSRAM: internal RAM is for Wi-Fi and Bluetooth
-  HaloItem it[N_ENTRIES][4];
+  HaloItem it[N_ENTRIES][12];
   HaloItem bg[N_ENTRIES], disc[N_ENTRIES], icon[N_ENTRIES], title[N_ENTRIES], sub[N_ENTRIES];
 };
 static MenuDrawn &m_drawn = psram_new<MenuDrawn>();
 static HaloItem (&m_bg)[N_ENTRIES] = m_drawn.bg, (&m_disc)[N_ENTRIES] = m_drawn.disc, (&m_icon)[N_ENTRIES] = m_drawn.icon;
 static HaloItem (&m_title)[N_ENTRIES] = m_drawn.title, (&m_sub)[N_ENTRIES] = m_drawn.sub;
 
-// An icon drawn with rings and lines (IC_*), on the card's disc; a = 0 hides it
-static void drawn_icon(HaloItem *it, const char *kind, float x, float y, float s, float a, const HaloView &v) {
+// An icon drawn with rings and lines (IC_*), on the card's disc (its color: bg); a = 0 hides it. 12 items
+static void drawn_icon(HaloItem *it, const char *kind, float x, float y, float s, float a, const HaloView &v,
+                       uint32_t bg = 0) {
   const uint32_t c = 0x1B1B1F;
-  for (int i = 0; i < 4; i++) it[i].kind = HI_LINE, it[i].color = c, it[i].color2 = c, it[i].scale = 1, it[i].alpha = 0;
+  for (int i = 0; i < 12; i++) it[i].kind = HI_LINE, it[i].color = c, it[i].color2 = c, it[i].scale = 1, it[i].alpha = 0;
   auto line = [&](HaloItem &l, float x0, float y0, float x1, float y1, float hw) {
     l.kind = HI_LINE, l.x = x + x0 * s, l.y = y + y0 * s, l.w = x + x1 * s, l.h = y + y1 * s, l.r = hw * s, l.alpha = a;
   };
@@ -136,9 +138,24 @@ static void drawn_icon(HaloItem *it, const char *kind, float x, float y, float s
   else if (kind == IC_TIMER)  // an hourglass
     line(it[0], -8, -12, 8, -12, 1.8f), line(it[1], -8, 12, 8, 12, 1.8f), line(it[2], -6, -11, 6, 11, 1.8f),
         line(it[3], 6, -11, -6, 11, 1.8f);
-  else if (kind == IC_LIST)
+  else if (kind == IC_GEMINI)  // Gemini's sparkle: four narrow spikes, three strokes each
+    for (int d = 0; d < 4; d++) {
+      const float dx = d == 1 ? 1 : d == 3 ? -1 : 0, dy = d == 0 ? -1 : d == 2 ? 1 : 0, L = 13, wd = 3.2f;
+      line(it[d * 3], -dy * wd, dx * wd, dx * L, dy * L, 1.7f), line(it[d * 3 + 1], dy * wd, -dx * wd, dx * L, dy * L, 1.7f);
+      line(it[d * 3 + 2], 0, 0, dx * L, dy * L, 2.4f);
+    }
+  else if (kind == IC_LEVEL)  // a ring, its crosshair and the bubble off center
+    ring(it[0], 0, 0, 12), line(it[1], -6, 0, 6, 0, 1.2f), line(it[2], 0, -6, 0, 6, 1.2f), line(it[3], 4, -3, 4, -3, 4.5f);
+  else if (kind == IC_GAMES) {  // a die: a dark square with four dots in the disc's color
+    it[0].kind = HI_RRECT, it[0].x = x, it[0].y = y, it[0].w = 24 * s, it[0].h = 24 * s, it[0].r = 6 * s, it[0].alpha = a;
+    for (int i = 0; i < 4; i++) {
+      HaloItem &d = it[1 + i];
+      d.kind = HI_CIRCLE, d.x = x + (i % 2 ? 5.5f : -5.5f) * s, d.y = y + (i / 2 ? 5.5f : -5.5f) * s, d.r = 2.6f * s;
+      d.color = bg, d.alpha = a;
+    }
+  } else if (kind == IC_LIST)
     for (int i = 0; i < 3; i++) line(it[i], -10, -8 + 8 * i, 10, -8 + 8 * i, 1.8f);
-  for (int i = 0; i < 4; i++) halo_view_commit(it[i], v);
+  for (int i = 0; i < 12; i++) halo_view_commit(it[i], v);
 }
 
 // Пришли на циферблат (halo_nav_face зовёт enter главного): в следующий раз галерея — с начала, как при запуске
@@ -191,9 +208,10 @@ static void menu_layout(const HaloView &v) {
     HaloItem &dc = m_disc[k];
     dc.kind = HI_CIRCLE, dc.x = ix, dc.y = iy, dc.r = 32, dc.scale = s, dc.color = d.color, dc.alpha = ac;
     dc.on_black = true;
-    const bool drawn = d.icon == IC_CLOCK || d.icon == IC_WATCH || d.icon == IC_LIST || d.icon == IC_TIMER;
+    const bool drawn = d.icon == IC_CLOCK || d.icon == IC_WATCH || d.icon == IC_LIST || d.icon == IC_TIMER ||
+                       d.icon == IC_GEMINI || d.icon == IC_LEVEL || d.icon == IC_GAMES;
     text_mid(m_icon[k], ic24, drawn ? "" : d.icon, mid_icon, ix, iy, s, 0x1B1B1F, ac, &dc);
-    drawn_icon(m_drawn.it[k], drawn ? d.icon : "", ix, iy, s, drawn ? ac : 0, v);
+    drawn_icon(m_drawn.it[k], drawn ? d.icon : "", ix, iy, s, drawn ? ac : 0, v, d.color);
     text_base(m_title[k], t24, d.title, x0 + 104 * s, y0 + 46 * s, s, TEXT, ac, &bg);
     text_base(m_sub[k], t20, d.sub, x0 + 104 * s, y0 + 80 * s, s, DIM, ac, &bg);
     halo_view_commit(bg, v), halo_view_commit(dc, v), halo_view_commit(m_icon[k], v);
@@ -270,7 +288,8 @@ static void menu_build() {
 #include "assistant.h"  // the Assistant screen, push-to-talk on BOOT
 #include "ancs.h"       // iPhone notifications over Bluetooth LE (ANCS)
 #include "settings.h"   // Settings: Watch face, Display, Sound, Assistant, Wi-Fi, Battery, Device; storage in flash
-#include "apps.h"       // History, World clock, Timer, Stopwatch, Steps
+#include "apps.h"       // Notifications, Music, History, World clock, Timer, Stopwatch; the face's iPhone bits
+#include "games.h"      // Level, Pop, Tilt
 #include "status.h"     // the controller's `status`; reactions to changed settings
 
 // ---------- Кадр ----------
@@ -278,10 +297,11 @@ static void menu_build() {
 // назад с погоды поверх циферблата; Settings — оба, но только от самого края (вниз — от верхних 90 px, вверх — от
 // нижних 70), остальное — прокрутка списка; Assistant — оба; сама галерея — только вниз от верхнего края
 static const HaloScreen MENU = {menu_enter, menu_update, menu_layout, menu_draw};
-static const HaloScreen *const APP_SCREENS[N_ENTRIES] = {&ASSISTANT,    &NOTIF_SCREEN,     &MUSIC_SCREEN, &HISTORY_SCREEN,
-                                                         &WEATHER,      &WORLD_SCREEN,     &TIMER_SCREEN,
-                                                         &STOPWATCH_SCREEN, &STEPS_SCREEN, &SETTINGS};
-static const HaloScreen FACE = {nullptr, face_update, face_layout, face_draw};
+static const HaloScreen *const APP_SCREENS[N_ENTRIES] = {&ASSISTANT,        &NOTIF_SCREEN, &MUSIC_SCREEN, &WEATHER,
+                                                         &WORLD_SCREEN,     &TIMER_SCREEN, &STOPWATCH_SCREEN,
+                                                         &LEVEL_SCREEN,     &GAMES_SCREEN, &SETTINGS};
+static const HaloScreen FACE = {nullptr, face_update, [](const HaloView &v) { face_layout(v), face_pick_layout(v); },
+                                face_draw};
 
 static void update(float dt) {
   halo_finger_update();  // палец — раз в кадр, в начале
@@ -333,6 +353,7 @@ void setup() {
   sound_build();
   settings_build();
   apps_build();
+  games_build();
   halo_nav_begin(MENU);  // главный — меню; команда back — назад
   halo_nav_face(FACE);   // под ним — циферблат: с него запуск
   halo_command("open", [](const char *a) { cmd_open = constrain(atoi(a), 0, N_ENTRIES - 1); });
@@ -360,5 +381,7 @@ void loop() {
   device_poll();         // Settings -> Device: restart, turn off
   battery_poll();
   steps_poll(false);     // the pedometer, saved to flash
-  bt_poll();             // an ANCS request the phone never answered        // уровень батареи раз в 5 с, история — во флеш
+  bt_poll();             // an ANCS request the phone never answered
+  tilt_poll();           // the accelerometer, while Level or a game is up
+  games_save_poll();     // a new best score into flash        // уровень батареи раз в 5 с, история — во флеш
 }

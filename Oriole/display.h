@@ -191,6 +191,7 @@ static void display_tick(float dt) {
   const float k = halo_clamp01(dp_power.x), lk = halo_clamp01(dp_lock.x), lv = dp_level(dp_sl.shown);
   ui_lock = lk;
   int level = (int)lroundf((lv + (DP_LEVEL[0] - lv) * lk) * k * k);  // the eye: the fade's end is the slow part
+  if (fc_night_on && halo_nav_on_face()) level = min(level, (int)DP_LEVEL[1]);  // night mode (face.h): low
   if (pw_bright >= 0) level = pw_bright;  // Always On
   if (level != dp_sent) halo_brightness(level), dp_sent = level;
   if (dp_power.target < 0.5f && dp_power.x < 0.01f && halo_display_is_on() && !pw_keep_lit)
