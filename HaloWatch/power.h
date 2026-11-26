@@ -4,16 +4,17 @@
 // the face's date and clock come back, dim on black — Always On. The board sleeps (light sleep: memory and program
 // stay) and wakes once a minute for one frame: new digits, set without rolling (asleep there is no time to play a
 // roll), and the pair a few pixels elsewhere (AMOLED burn-in: 8 places on a 7 px circle). The panel keeps the picture
-// by itself. BOOT (anywhere) fades the screen out to fully dark instead, no Always On.
+// by itself. (BOOT is the assistant's push-to-talk now, assistant.h: it no longer turns the screen off.)
 // A touch, BOOT or picking the board up (after it lay still) — the screen where it was, at full brightness, at once;
-// the waking touch presses nothing. A touch while the screen is fading out — it stays.
-// While music plays the board does not really sleep (the sound needs the processor): halo_stay_awake. On USB power it
-// does not either (Halo: the USB port would go quiet and the board could not be flashed) — the same screens and
-// wake-ups, the frames just go on.
+// the waking touch presses nothing, the waking BOOT is already talking. A touch while the screen is fading out — it
+// stays. While the assistant listens, thinks or speaks the screen stays on and the board does not really sleep (the
+// sound needs the processor): halo_stay_awake; while Wi-Fi is on — neither (net.h). On USB power it does not either
+// (Halo: the USB port would go quiet and the board could not be flashed) — the same screens and wake-ups, the frames
+// just go on.
 // Commands: aod on|off (Always On, or dark when idle), idle N (s; 0 — never), sleep (Always On now), wake (as a
 // touch — only while the board stays up: on USB), usb on|off (really sleep on USB too — the port then goes quiet:
 // wake the board by hand before flashing it).
-// Included from HaloWatch.ino after player.h.
+// Included from HaloWatch.ino after gemini.h, before assistant.h.
 #include <sys/time.h>
 
 #define PW_IDLE_S 15
@@ -27,7 +28,7 @@ static bool pw_to_aod;        // where the fade goes: Always On or dark
 static float pw_k;            // Always On brightness ramp, 0..1
 static int64_t pw_active_us;  // the last touch or motion
 static uint32_t pw_motion;
-static bool pw_held;          // halo_stay_awake held for the music
+static bool pw_held;          // halo_stay_awake held for the assistant
 static volatile bool pw_cmd_sleep, pw_cmd_wake, pw_aod_on = true;
 static volatile int pw_idle_s = PW_IDLE_S;
 
@@ -56,21 +57,20 @@ static void power_tick(float dt) {
   const HaloFinger &f = halo_finger;
   const int64_t now = esp_timer_get_time();
   const bool moved = halo_motion_count() != pw_motion;
-  if (f.down || moved) pw_active_us = now;  // touched or moved — not idle
+  const bool busy = ai_busy();
+  if (f.down || moved || busy) pw_active_us = now;  // touched, moved or talking — not idle
   pw_motion = halo_motion_count();
-  if (pl_playing != pw_held) pw_held = pl_playing, halo_stay_awake(pw_held);
+  if (busy != pw_held) pw_held = busy, halo_stay_awake(pw_held);
   uint8_t w = halo_woke();
   if (pw_cmd_wake) pw_cmd_wake = false, w = w ? w : (pw_mode == PW_AOD || pw_mode == PW_DARK) ? HALO_WAKE_TOUCH : 0;
-  const bool boot = halo_boot_click();
+  const bool boot = halo_boot_click() || (digitalRead(0) == LOW && pw_mode == PW_FADING);  // talking cancels a fade
   switch (pw_mode) {
     case PW_ACTIVE:
-      if (boot) pw_fade(false);
-      else if (pw_cmd_sleep || (pw_idle_s && now - pw_active_us > pw_idle_s * 1000000ll)) pw_fade(pw_aod_on);
+      if (pw_cmd_sleep || (pw_idle_s && now - pw_active_us > pw_idle_s * 1000000ll)) pw_fade(pw_aod_on);
       break;
     case PW_FADING:
-      // Touched while fading out — the screen stays; picked up too, but only on the way to Always On (BOOT, pressed
-      // in a hand, moves the board as well — the dark fade is not cancelled by that)
-      if (f.down || boot || (pw_to_aod && moved)) {
+      // Touched, BOOT or picked up while fading out — the screen stays
+      if (f.down || boot || busy || moved) {
         pw_mode = PW_ACTIVE, pw_keep_lit = false, dp_power.target = 1, pw_active_us = now;
       } else if (dp_power.x < 0.01f) {
         if (pw_to_aod) {

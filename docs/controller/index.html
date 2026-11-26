@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HaloWatch Controller</title>
+<meta name="description" content="Set up HaloWatch over USB: Wi-Fi, the Gemini assistant, weather, clock, and a live log.">
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --panel2: #f0f2f5; --line: #dfe3e8; --text: #1b1d21; --dim: #5f6570;
+  --accent: #2f6fde; --accent-text: #ffffff; --ok: #1e8e3e; --warn: #b26a00; --err: #c5221f; --info: #2f6fde;
+  --log-bg: #0f1115; --log-text: #d7dae0; --log-dim: #7d8490; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
+  --radius: 14px; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1115; --panel: #181b20; --panel2: #1f232a; --line: #2b3038; --text: #e8eaed; --dim: #9aa0a6;
+    --accent: #8ab4f8; --accent-text: #0b1f44; --ok: #81c995; --warn: #fdd663; --err: #f28b82; --info: #8ab4f8;
+    --log-bg: #0b0d10; --shadow: none; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1115; --panel: #181b20; --panel2: #1f232a; --line: #2b3038; --text: #e8eaed; --dim: #9aa0a6;
+  --accent: #8ab4f8; --accent-text: #0b1f44; --ok: #81c995; --warn: #fdd663; --err: #f28b82; --info: #8ab4f8;
+  --log-bg: #0b0d10; --shadow: none; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+.bar { max-width: 1280px; margin: 0 auto; padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 17px; margin-right: auto; }
+.dot { width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, var(--accent), #1b1d21 75%); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--panel2); color: var(--dim); font-size: 13px; white-space: nowrap; }
+.chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; }
+.chip.ok i { background: var(--ok); } .chip.warn i { background: var(--warn); } .chip.err i { background: var(--err); } .chip.info i { background: var(--info); }
+button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 7px 14px; border-radius: 999px; cursor: pointer; }
+button:hover { border-color: var(--dim); }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; font-weight: 600; }
+button:disabled { opacity: .45; cursor: default; }
+main { max-width: 1280px; margin: 0 auto; padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 980px) { main { grid-template-columns: minmax(0, 1fr); } }
+.col { display: grid; gap: 16px; min-width: 0; align-content: start; }
+main > .col:last-child { align-self: stretch; }  /* as tall as the settings: the log can stick while they scroll */
+@media (max-width: 980px) { header { position: static; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; min-width: 0; }
+.card h2 { margin: 0 0 4px; font-size: 16px; }
+.card p.sub { margin: 0 0 14px; color: var(--dim); font-size: 13px; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 560px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.full { grid-column: 1 / -1; }
+label { display: grid; gap: 4px; font-size: 13px; color: var(--dim); min-width: 0; }
+input[type=text], input[type=password], input[type=number], select, textarea {
+  font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; width: 100%; min-width: 0;
+}
+textarea { resize: vertical; min-height: 110px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.check { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: 14px; }
+.check input { width: 18px; height: 18px; accent-color: var(--accent); }
+.range { display: grid; grid-template-columns: 1fr 48px; gap: 8px; align-items: center; }
+.range input { accent-color: var(--accent); width: 100%; }
+.range output { font-variant-numeric: tabular-nums; text-align: right; color: var(--text); }
+.actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
+.hint { color: var(--dim); font-size: 12px; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; font-size: 14px; }
+.kv dt { color: var(--dim); } .kv dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.log-card { position: sticky; top: 72px; display: flex; flex-direction: column; height: calc(100vh - 96px); min-height: 420px; }
+@media (max-width: 980px) { .log-card { position: static; height: 70vh; } }
+.log-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.log-tools input[type=text] { flex: 1 1 140px; width: auto; }
+#log { flex: 1; overflow: auto; background: var(--log-bg); color: var(--log-text); border-radius: 10px; padding: 10px 12px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+#log .t { color: var(--log-dim); } #log .e { color: #f28b82; } #log .w { color: #fdd663; } #log .a { color: #8ab4f8; } #log .n { color: #81c995; } #log .p { color: #7d8490; } #log .me { color: #c58af9; }
+.cmd { display: flex; gap: 8px; margin-top: 10px; }
+.cmd input { flex: 1; font-family: var(--mono); }
+.empty { color: var(--dim); text-align: center; padding: 40px 12px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: calc(100vw - 32px); }
+.toast.show { opacity: 1; }
+.banner { background: var(--panel2); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; color: var(--dim); }
+.banner b { color: var(--text); }
+.wx { display: flex; gap: 8px; flex-wrap: wrap; }
+.wx span { background: var(--panel2); border-radius: 8px; padding: 3px 8px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand"><span class="dot" aria-hidden="true"></span>HaloWatch Controller</div>
+    <span class="chip" id="chip-conn"><i></i><span>Not connected</span></span>
+    <span class="chip" id="chip-wifi"><i></i><span>Wi-Fi</span></span>
+    <span class="chip" id="chip-ai"><i></i><span>Assistant</span></span>
+    <button class="primary" id="btn-connect">Connect watch</button>
+  </div>
+</header>
+
+<main>
+  <div class="col">
+    <div class="banner" id="banner">
+      <b>Plug the watch in over USB, then press “Connect watch”</b> and pick the <i>USB JTAG/serial</i> port.
+      This page talks to the watch directly from Chrome or Edge (Web Serial); nothing is sent anywhere else.
+      On connect, the watch's clock is set from this computer.
+    </div>
+
+    <section class="card">
+      <h2>Status</h2>
+      <p class="sub">Refreshed every few seconds while connected.</p>
+      <dl class="kv" id="status"><dt>Watch</dt><dd>not connected</dd></dl>
+    </section>
+
+    <section class="card" data-section="wifi">
+      <h2>Wi-Fi</h2>
+      <p class="sub">The watch turns Wi-Fi on only while it needs it (assistant, weather, time) and off when idle. 2.4 GHz networks only.</p>
+      <div class="grid">
+        <label>Network (SSID)
+          <input type="text" data-key="wifi_ssid" list="ssids" autocomplete="off" spellcheck="false">
+          <datalist id="ssids"></datalist>
+        </label>
+        <label>Password
+          <input type="password" data-key="wifi_pass" data-secret autocomplete="new-password" placeholder="unchanged">
+        </label>
+        <label>Turn off after idle (seconds)
+          <input type="number" data-key="net_idle" min="10" max="3600">
+        </label>
+      </div>
+      <div class="actions">
+        <button data-cmd="wifi scan">Scan networks</button>
+        <button data-cmd="wifi on">Connect now</button>
+        <button class="primary" data-save="wifi">Save</button>
+      </div>
+    </section>
+
+    <section class="card" data-section="ai">
+      <h2>Assistant (Gemini Live)</h2>
+      <p class="sub">Hold BOOT on the watch, talk, release; the answer is spoken. Get a free API key at aistudio.google.com → “Get API key”.</p>
+      <div class="grid">
+        <label class="full">Gemini API key
+          <input type="password" data-key="ai_key" data-secret autocomplete="off" spellcheck="false" placeholder="not set">
+        </label>
+        <label>Model
+          <input type="text" data-key="ai_model" list="models" spellcheck="false">
+          <datalist id="models">
+            <option value="gemini-3.1-flash-live-preview">
+            <option value="gemini-2.5-flash-native-audio-preview-12-2025">
+          </datalist>
+        </label>
+        <label>Voice
+          <input type="text" data-key="ai_voice" list="voices" spellcheck="false">
+          <datalist id="voices">
+            <option value="Puck"><option value="Charon"><option value="Kore"><option value="Fenrir">
+            <option value="Aoede"><option value="Leda"><option value="Orus"><option value="Zephyr">
+          </datalist>
+        </label>
+        <label>Language code <span class="hint">(empty: automatic; e.g. en-US, de-DE)</span>
+          <input type="text" data-key="ai_lang" spellcheck="false" placeholder="automatic">
+        </label>
+        <label>Keep the conversation open (seconds)
+          <input type="number" data-key="ai_keep" min="0" max="3600">
+        </label>
+        <label class="full">System prompt
+          <textarea data-key="ai_prompt" maxlength="1199"></textarea>
+          <span class="hint">The watch adds the local time and your city (first weather city) at the end.</span>
+        </label>
+        <label class="check"><input type="checkbox" data-key="ai_search"> Google Search grounding (news, scores, facts)</label>
+        <label class="check"><input type="checkbox" data-key="ai_auto_vad"> Automatic end-of-speech detection</label>
+      </div>
+      <div class="actions">
+        <button data-cmd="ai close">Close session</button>
+        <button class="primary" data-save="ai">Save</button>
+      </div>
+      <div class="cmd">
+        <input type="text" id="ask" placeholder="Type a question to test (the watch speaks the answer)" maxlength="380">
+        <button id="btn-ask">Ask</button>
+      </div>
+    </section>
+
+    <section class="card" data-section="audio">
+      <h2>Sound</h2>
+      <p class="sub">“Mic test” records 3 seconds and plays them back; the level appears in the log.</p>
+      <div class="grid">
+        <label>Speaker volume
+          <span class="range"><input type="range" data-key="volume" min="0" max="100"><output></output></span>
+        </label>
+        <label>Microphone gain (dB)
+          <span class="range"><input type="range" data-key="mic_gain" min="0" max="36" step="3"><output></output></span>
+        </label>
+        <label>Microphone
+          <select data-key="mic_channel">
+            <option value="0">Both mics, mixed</option>
+            <option value="1">MIC1 (left)</option>
+            <option value="2">MIC2 (right)</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
+        <button data-cmd="mic test">Mic test</button>
+        <button class="primary" data-save="audio">Save</button>
+      </div>
+    </section>
+
+    <section class="card" data-section="weather">
+      <h2>Weather</h2>
+      <p class="sub">Up to four places, from Open-Meteo. “City”, “City, Country” or “latitude, longitude”. The first one is on the watch face.</p>
+      <div class="grid">
+        <label>Place 1 <input type="text" data-city="0" spellcheck="false"></label>
+        <label>Place 2 <input type="text" data-city="1" spellcheck="false"></label>
+        <label>Place 3 <input type="text" data-city="2" spellcheck="false"></label>
+        <label>Place 4 <input type="text" data-city="3" spellcheck="false"></label>
+        <label>Update every (minutes) <input type="number" data-key="wx_every" min="10" max="360"></label>
+        <label class="check"><input type="checkbox" data-key="wx_fahrenheit"> Fahrenheit</label>
+      </div>
+      <div class="actions">
+        <button data-cmd="weather">Update now</button>
+        <button class="primary" data-save="weather">Save</button>
+      </div>
+    </section>
+
+    <section class="card" data-section="clock">
+      <h2>Clock</h2>
+      <p class="sub">The time comes from the internet (or this page). Time zone “Auto” follows the first weather place.</p>
+      <div class="grid">
+        <label>Time zone
+          <select id="tz-pick">
+            <option value="">Auto (first weather place)</option>
+            <option value="PST8PDT,M3.2.0,M11.1.0">US Pacific</option>
+            <option value="MST7MDT,M3.2.0,M11.1.0">US Mountain</option>
+            <option value="MST7">US Arizona</option>
+            <option value="CST6CDT,M3.2.0,M11.1.0">US Central</option>
+            <option value="EST5EDT,M3.2.0,M11.1.0">US Eastern</option>
+            <option value="GMT0BST,M3.5.0/1,M10.5.0">UK, Ireland, Portugal</option>
+            <option value="CET-1CEST,M3.5.0,M10.5.0/3">Central Europe</option>
+            <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">Eastern Europe</option>
+            <option value="&lt;+03&gt;-3">Turkey (UTC+3)</option>
+            <option value="MSK-3">Moscow</option>
+            <option value="&lt;+04&gt;-4">Gulf (UTC+4)</option>
+            <option value="IST-5:30">India</option>
+            <option value="CST-8">China, Singapore</option>
+            <option value="JST-9">Japan, Korea</option>
+            <option value="AEST-10AEDT,M10.1.0,M4.1.0/3">Sydney, Melbourne</option>
+            <option value="NZST-12NZDT,M9.5.0,M4.1.0/3">New Zealand</option>
+            <option value="UTC0">UTC</option>
+            <option value="custom">Custom POSIX string…</option>
+          </select>
+        </label>
+        <label>POSIX TZ string
+          <input type="text" data-key="tz" spellcheck="false" placeholder="auto">
+        </label>
+        <label class="check"><input type="checkbox" data-key="clock24"> 24-hour clock</label>
+      </div>
+      <div class="actions">
+        <button id="btn-time">Set time from this computer</button>
+        <button class="primary" data-save="clock">Save</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Watch</h2>
+      <p class="sub">To flash new firmware, use Espressif's web flasher with the .bin from Releases (address 0x0).</p>
+      <div class="actions" style="justify-content:flex-start;margin-top:0">
+        <button data-cmd="reboot">Restart watch</button>
+        <button id="btn-theme">Theme</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card log-card">
+      <div class="log-tools">
+        <h2 style="margin:0 8px 0 0">Log</h2>
+        <input type="text" id="filter" placeholder="Filter" spellcheck="false">
+        <label class="check" style="font-size:13px"><input type="checkbox" id="show-proto"> Protocol</label>
+        <label class="check" style="font-size:13px"><input type="checkbox" id="follow" checked> Follow</label>
+        <button id="btn-clear">Clear</button>
+        <button id="btn-save-log">Download</button>
+      </div>
+      <div id="log"><div class="empty">The watch's log appears here once connected.</div></div>
+      <div class="cmd">
+        <input type="text" id="cmdline" placeholder="Command (e.g. help, sys, status, ai)" spellcheck="false" autocomplete="off">
+        <button id="btn-send">Send</button>
+      </div>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+let port = null, reader = null, writer = null, pollTimer = null, cfg = {}, lastStatus = null;
+const logLines = [];          // {text, cls}
+const MAX_LOG = 5000;
+const PROTO = /^(CFG|STATUS|SCAN|OK|ERR) /;
+
+// ---------- Theme ----------
+try { const t = localStorage.getItem('hw-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+$('#btn-theme').onclick = () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('hw-theme', next); } catch (e) {}
+};
+
+// ---------- Toast ----------
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+// ---------- Log ----------
+function classify(line) {
+  if (PROTO.test(line)) return 'p';
+  if (/^> /.test(line)) return 'me';
+  const l = line.toLowerCase();
+  if (/error|fail|not found|could not|rejected|lost|no memory|panic|guru|abort/.test(l)) return 'e';
+  if (/warn|retry|skipp|timeout/.test(l)) return 'w';
+  if (/assistant|mic|boot: talking/.test(l)) return 'a';
+  if (/wifi|clock|weather|time zone/.test(l)) return 'n';
+  return '';
+}
+function lineHtml(o) {
+  const esc = o.text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const m = esc.match(/^(\[\s*[\d.]+\] )(.*)$/);
+  const body = m ? `<span class="t">${m[1]}</span>${m[2]}` : esc;
+  return `<div class="${o.cls}">${body}</div>`;
+}
+function visible(o) {
+  if (o.cls === 'p' && !$('#show-proto').checked) return false;
+  const f = $('#filter').value.trim().toLowerCase();
+  return !f || o.text.toLowerCase().includes(f);
+}
+function renderLog() {
+  const el = $('#log');
+  const shown = logLines.filter(visible);
+  el.innerHTML = shown.length ? shown.slice(-1500).map(lineHtml).join('') : '<div class="empty">Nothing to show yet.</div>';
+  if ($('#follow').checked) el.scrollTop = el.scrollHeight;
+}
+let queued = [];
+function addLog(text, cls) {
+  const o = { text, cls: cls ?? classify(text) };
+  logLines.push(o);
+  if (logLines.length > MAX_LOG) logLines.splice(0, logLines.length - MAX_LOG);
+  if (!visible(o)) return;
+  if (queued.push(o) > 1) return;
+  requestAnimationFrame(() => {  // new lines go out once a frame, appended
+    const el = $('#log');
+    if (el.querySelector('.empty')) el.innerHTML = '';
+    el.insertAdjacentHTML('beforeend', queued.map(lineHtml).join(''));
+    queued = [];
+    while (el.children.length > 1500) el.firstChild.remove();
+    if ($('#follow').checked) el.scrollTop = el.scrollHeight;
+  });
+}
+$('#filter').oninput = renderLog;
+$('#show-proto').onchange = renderLog;
+$('#btn-clear').onclick = () => { logLines.length = 0; renderLog(); };
+$('#btn-save-log').onclick = () => {
+  const blob = new Blob([logLines.map(o => o.text).join('\n') + '\n'], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `halowatch-log-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+// ---------- Serial ----------
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let writeChain = Promise.resolve();
+function send(line, quiet) {
+  if (!writer) { toast('Connect the watch first'); return Promise.resolve(); }
+  if (!quiet) addLog('> ' + line.replace(/^(set (?:wifi_pass|ai_key) ).*/, '$1••••'), 'me');
+  const data = new TextEncoder().encode(line + '\n');
+  writeChain = writeChain.then(async () => {
+    for (let i = 0; i < data.length; i += 64) {   // small pieces: the watch's USB buffer never overflows
+      await writer.write(data.slice(i, i + 64));
+      if (data.length > 64) await sleep(4);
+    }
+  }).catch(e => addLog('write failed: ' + e.message, 'e'));
+  return writeChain;
+}
+
+async function connect() {
+  if (!('serial' in navigator)) {
+    toast('This browser has no Web Serial. Use Chrome or Edge on a computer.');
+    return;
+  }
+  try {
+    port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x303a }] });
+  } catch (e) { return; }
+  try {
+    await port.open({ baudRate: 115200, bufferSize: 65536 });
+  } catch (e) { toast('Could not open the port: ' + e.message); port = null; return; }
+  writer = port.writable.getWriter();
+  setConnected(true);
+  readLoop();
+  await sleep(300);
+  syncTime(true);
+  send('cfg', true);
+  send('status', true);
+  pollTimer = setInterval(() => send('status', true), 3000);
+}
+
+async function disconnect() {
+  clearInterval(pollTimer); pollTimer = null;
+  try { await reader?.cancel(); } catch (e) {}
+  try { writer?.releaseLock(); } catch (e) {}
+  try { await port?.close(); } catch (e) {}
+  reader = writer = port = null;
+  setConnected(false);
+}
+
+async function readLoop() {
+  const dec = new TextDecoder();
+  let buf = '';
+  while (port?.readable) {
+    reader = port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).replace(/\r$/, '');
+          buf = buf.slice(i + 1);
+          onLine(line);
+        }
+        if (buf.length > 100000) buf = buf.slice(-1000);
+      }
+    } catch (e) {
+      addLog('connection: ' + e.message, 'e');
+      break;
+    } finally {
+      try { reader.releaseLock(); } catch (e) {}
+    }
+  }
+  if (port) { toast('The watch was disconnected'); disconnect(); }
+}
+
+navigator.serial?.addEventListener('disconnect', e => { if (e.target === port) disconnect(); });
+
+function onLine(line) {
+  if (line.startsWith('CFG ')) { try { cfg = JSON.parse(line.slice(4)); fillForm(); } catch (e) { addLog('bad CFG: ' + e.message, 'e'); } }
+  else if (line.startsWith('STATUS ')) { try { showStatus(JSON.parse(line.slice(7))); } catch (e) {} }
+  else if (line.startsWith('SCAN ')) { try { showScan(JSON.parse(line.slice(5))); } catch (e) {} }
+  else if (line.startsWith('OK ')) { const k = line.slice(3); if (savedKeys.has(k)) { savedKeys.delete(k); if (!savedKeys.size) { toast('Saved'); send('cfg', true); } } }
+  else if (line.startsWith('ERR ')) toast(line.slice(4));
+  if (line.startsWith('STATUS ') && !$('#show-proto').checked) { logLines.push({ text: line, cls: 'p' }); return; }
+  addLog(line);
+}
+
+function syncTime(quiet) {
+  send(`time ${Math.floor(Date.now() / 1000)} ${-new Date().getTimezoneOffset()}`, quiet);
+}
+
+// ---------- Status ----------
+function setChip(id, cls, text) {
+  const c = $(id); c.className = 'chip ' + (cls || ''); c.querySelector('span').textContent = text;
+}
+function setConnected(on) {
+  $('#btn-connect').textContent = on ? 'Disconnect' : 'Connect watch';
+  setChip('#chip-conn', on ? 'ok' : '', on ? 'Connected' : 'Not connected');
+  $('#banner').style.display = on ? 'none' : '';
+  if (!on) {
+    setChip('#chip-wifi', '', 'Wi-Fi'); setChip('#chip-ai', '', 'Assistant');
+    $('#status').innerHTML = '<dt>Watch</dt><dd>not connected</dd>';
+  }
+}
+function fmtAge(s) {
+  if (s < 0) return 'never';
+  if (s < 90) return `${s} s ago`;
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  return `${(s / 3600).toFixed(1)} h ago`;
+}
+function showStatus(s) {
+  lastStatus = s;
+  const wifiText = { off: 'Wi-Fi off', connecting: 'Wi-Fi connecting', connected: 'Wi-Fi on', failed: 'Wi-Fi failed', no_ssid: 'No Wi-Fi set' }[s.wifi] || s.wifi;
+  setChip('#chip-wifi', { connected: 'ok', connecting: 'info', failed: 'err', no_ssid: 'warn' }[s.wifi] || '', wifiText);
+  const aiCls = { listening: 'info', thinking: 'info', speaking: 'ok', connecting: 'info', error: 'err' }[s.ai] || '';
+  setChip('#chip-ai', aiCls, 'Assistant: ' + s.ai);
+  const rows = [
+    ['Firmware', `HaloWatch ${s.version} · up ${Math.floor(s.uptime / 3600)} h ${Math.floor(s.uptime / 60) % 60} min`],
+    ['Wi-Fi', s.wifi === 'connected' ? `${s.ssid} · ${s.ip} · ${s.rssi} dBm` : `${wifiText}${s.ssid ? ' (' + s.ssid + ')' : ''}`],
+    ['Clock', s.clock_ok ? `${s.local} · ${s.tz ? 'time zone ' + s.tz : 'time zone auto'}` : 'not set yet'],
+    ['Assistant', s.ai + (s.ai_error ? ' — ' + s.ai_error : '') + (s.session ? ' · session open' : '')],
+    ['Weather', (s.weather || []).map(w => `${w.city}${w.now !== undefined ? ` ${w.now}° (${w.hi}/${w.lo})` : ' —'}`).join(' · ') + ` · updated ${fmtAge(s.weather_age)}`],
+    ['Battery', s.battery !== undefined ? `${s.battery < 0 ? 'none' : s.battery + ' %'}${s.charging ? ' · charging' : s.usb ? ' · on USB' : ''}` : '—'],
+    ['Memory', `internal ${Math.round(s.heap / 1024)} KB free (lowest ${Math.round(s.heap_min / 1024)}) · PSRAM ${(s.psram / 1048576).toFixed(1)} MB`],
+  ];
+  $('#status').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${String(v).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</dd>`).join('');
+}
+function showScan(list) {
+  const seen = new Set();
+  $('#ssids').innerHTML = list.sort((a, b) => b.rssi - a.rssi).filter(n => n.ssid && !seen.has(n.ssid) && seen.add(n.ssid))
+    .map(n => `<option value="${n.ssid.replace(/"/g, '&quot;')}">${n.rssi} dBm${n.open ? ', open' : ''}</option>`).join('');
+  toast(`${seen.size} networks found — pick one in the Network field`);
+}
+
+// ---------- Settings form ----------
+// A field the user has edited and not saved yet keeps its value when fresh settings arrive
+document.addEventListener('input', e => { if (e.target.matches('[data-key],[data-city]')) e.target.dataset.dirty = '1'; });
+function fillForm() {
+  for (const el of $$('[data-key]')) {
+    const k = el.dataset.key;
+    if (el.dataset.dirty) continue;
+    if (el.hasAttribute('data-secret')) {
+      el.value = '';
+      const set = cfg[k + '_set'];
+      el.placeholder = set ? (k === 'ai_key' && cfg.ai_key ? `set (…${cfg.ai_key})` : 'set — leave empty to keep') : 'not set';
+      continue;
+    }
+    if (!(k in cfg)) continue;
+    if (el.type === 'checkbox') el.checked = !!cfg[k];
+    else el.value = cfg[k];
+    if (el.type === 'range') el.nextElementSibling.value = el.value;
+  }
+  const cities = (cfg.wx_cities || '').split(';');
+  for (const el of $$('[data-city]')) if (!el.dataset.dirty) el.value = (cities[+el.dataset.city] || '').trim();
+  const tz = cfg.tz || '';
+  const opt = [...$('#tz-pick').options].find(o => o.value === tz);
+  $('#tz-pick').value = opt ? tz : 'custom';
+}
+for (const r of $$('input[type=range]')) r.oninput = () => (r.nextElementSibling.value = r.value);
+$('#tz-pick').onchange = () => {
+  const v = $('#tz-pick').value, f = $('[data-key=tz]');
+  if (v !== 'custom') f.value = v, (f.dataset.dirty = '1');
+  else f.focus();
+};
+
+const savedKeys = new Set();
+function valueOf(el) {
+  if (el.type === 'checkbox') return el.checked ? '1' : '0';
+  return el.value;
+}
+function escapeValue(v) { return String(v).replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n'); }
+function save(section) {
+  if (!writer) return toast('Connect the watch first');
+  const card = $(`[data-section="${section}"]`);
+  const changes = [];
+  for (const el of $$('[data-key]', card)) {
+    const k = el.dataset.key, v = valueOf(el);
+    if (el.hasAttribute('data-secret')) { if (v) changes.push([k, v]); continue; }
+    const old = cfg[k] === true ? '1' : cfg[k] === false ? '0' : String(cfg[k] ?? '');
+    if (v !== old) changes.push([k, v]);
+  }
+  if (section === 'weather') {
+    const v = $$('[data-city]').map(e => e.value.replace(/;/g, ',').trim()).filter(Boolean).join(';');
+    if (v !== (cfg.wx_cities || '')) changes.push(['wx_cities', v]);
+  }
+  for (const el of $$('[data-key],[data-city]', card)) el.removeAttribute('data-dirty');
+  if (!changes.length) return toast('Nothing changed');
+  for (const [k, v] of changes) { savedKeys.add(k); send(`set ${k} ${escapeValue(v)}`); }
+}
+for (const b of $$('[data-save]')) b.onclick = () => save(b.dataset.save);
+for (const b of $$('[data-cmd]')) b.onclick = () => {
+  if (b.dataset.cmd === 'reboot' && !confirm('Restart the watch?')) return;
+  send(b.dataset.cmd);
+};
+$('#btn-time').onclick = () => { syncTime(false); toast('Time sent'); };
+$('#btn-ask').onclick = () => { const q = $('#ask').value.trim(); if (q) send('ask ' + q.replace(/\n/g, ' ')), ($('#ask').value = ''); };
+$('#ask').onkeydown = e => { if (e.key === 'Enter') $('#btn-ask').click(); };
+const cmdHistory = []; let hIdx = 0;
+$('#btn-send').onclick = () => { const c = $('#cmdline').value.trim(); if (!c) return; send(c); cmdHistory.push(c); hIdx = cmdHistory.length; $('#cmdline').value = ''; };
+$('#cmdline').onkeydown = e => {
+  if (e.key === 'Enter') $('#btn-send').click();
+  else if (e.key === 'ArrowUp' && hIdx > 0) { $('#cmdline').value = cmdHistory[--hIdx]; e.preventDefault(); }
+  else if (e.key === 'ArrowDown') { hIdx = Math.min(cmdHistory.length, hIdx + 1); $('#cmdline').value = cmdHistory[hIdx] || ''; }
+};
+$('#btn-connect').onclick = () => (port ? disconnect() : connect());
+if (!('serial' in navigator)) {
+  $('#banner').innerHTML = '<b>This browser cannot talk to USB devices.</b> Open this page in Chrome or Edge on a computer (Web Serial).';
+}
+</script>
+</body>
+</html>

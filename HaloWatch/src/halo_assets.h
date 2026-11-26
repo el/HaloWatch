@@ -6,11 +6,11 @@ extern const HaloFont t_title;  // GoogleSansFlex.ttf 34 px, 104 букв, ст�
 extern const HaloFont t24;  // GoogleSansFlex.ttf 24 px, 104 букв, строка 31, базовая линия 24
 extern const HaloFont t20;  // GoogleSansFlex.ttf 20 px, 103 букв, строка 26, базовая линия 20
 extern const HaloFont n48;  // GoogleSansFlex.ttf 48 px, 15 букв, строка 61, базовая линия 47
-extern const HaloFont ic24;  // fa-solid-900.ttf 24 px, 12 букв, строка 26, базовая линия 22
+extern const HaloFont ic24;  // fa-solid-900.ttf 24 px, 13 букв, строка 26, базовая линия 22
 extern const HaloFont ic18;  // fa-solid-900.ttf 18 px, 3 букв, строка 20, базовая линия 17
-extern const HaloFont ic32;  // fa-solid-900.ttf 32 px, 6 букв, строка 34, базовая линия 29
-extern const HaloFont w_now;  // GoogleSansFlex.ttf 91 px, 11 букв, строка 115, базовая линия 88
-extern const HaloFont w_hl;  // GoogleSansFlex.ttf 37 px, 10 букв, строка 47, базовая линия 36
+extern const HaloFont ic32;  // fa-solid-900.ttf 32 px, 7 букв, строка 34, базовая линия 29
+extern const HaloFont w_now;  // GoogleSansFlex.ttf 91 px, 12 букв, строка 115, базовая линия 88
+extern const HaloFont w_hl;  // GoogleSansFlex.ttf 37 px, 11 букв, строка 47, базовая линия 36
 extern const HaloFont w_hour;  // GoogleSansFlex.ttf 28 px, 13 букв, строка 37, базовая линия 28
 extern const HaloImage img_wx;  // wx_big.png, 67×72
 extern const HaloImage img_wx_sm;  // wx_small.png, 56×60

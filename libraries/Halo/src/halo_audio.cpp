@@ -1,4 +1,5 @@
-// Звук для Halo: динамик через кодек ES8311 (I2C 0x18 — на шине тача) и усилитель (GPIO46).
+// Звук для Halo: динамик через кодек ES8311 (I2C 0x18 — на шине тача) и усилитель (GPIO46); микрофоны — через
+// АЦП ES7210 (I2C 0x40) на той же шине I2S.
 //
 // I2S (драйвер ESP-IDF i2s_std): ESP32 ведёт шину — MCLK = 256·fs на GPIO16, BCLK 9, LRCK 45, данные 8; 16 бит,
 // стерео (в оба канала — одно и то же: динамик один). Кодек — ведомый, тактируется от MCLK. Регистры ES8311 — из
@@ -9,6 +10,14 @@
 // Пока тишина дольше 150 мс — усилитель выключен (динамик не шипит), задача спит, а DMA сам шлёт нули. Буфер DMA —
 // 6 × 256 кадров (~70 мс при 22 050 Гц): запись во флеш (настройки) на миг останавливает задачи из флеша, звук
 // за это время доигрывает из буфера.
+//
+// Microphones: the ES7210 sits on the same I2S bus as the ES8311 (MCLK, BCLK and LRCK shared, its data on GPIO10), so
+// the channel is full duplex — one I2S controller, a TX and an RX channel created together, one sample rate for both.
+// The ES7210 is a slave too; in plain I2S mode its SDOUT1 carries ADC1 and ADC2 (MIC1 left, MIC2 right). With
+// MCLK = 256·fs its clock dividers are the same for any rate (Espressif's table: adc_div 1, doubler, DLL, OSR 0x20,
+// LRCK = MCLK/256). Register sequence — Waveshare's es7210.cpp for this board (Apache-2.0). Capturing runs in a task
+// of its own (core 0): halo_mic_on(sink) — the sink gets mono 16-bit blocks of 256 samples, halo_mic_off() — the RX
+// channel stops and the ES7210's microphones and ADCs power down.
 #include "halo_internal.h"
 
 #include <driver/gpio.h>
@@ -16,8 +25,8 @@
 #include <driver/i2s_std.h>
 
 #define FRAMES 256
-static i2s_chan_handle_t tx;
-static i2c_master_dev_handle_t es;
+static i2s_chan_handle_t tx, rx;
+static i2c_master_dev_handle_t es, em;  // ES8311, ES7210
 static HaloAudioFill fill_cb;
 static int rate;
 static volatile int volume = 60;
@@ -75,7 +84,7 @@ bool halo_audio_begin(HaloAudioFill fill, int sample_rate) {
   // I2S: сначала такты (кодеку нужен MCLK, чтобы принять настройки)
   i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
   cc.dma_desc_num = 6, cc.dma_frame_num = FRAMES, cc.auto_clear = true;
-  if (i2s_new_channel(&cc, &tx, nullptr) != ESP_OK) return LOG("audio: I2S FAILED\n"), tx = nullptr, false;
+  if (i2s_new_channel(&cc, &tx, &rx) != ESP_OK) return LOG("audio: I2S FAILED\n"), tx = rx = nullptr, false;
   i2s_std_config_t sc = {};
   sc.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG((uint32_t)rate);
   sc.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
@@ -84,6 +93,8 @@ bool halo_audio_begin(HaloAudioFill fill, int sample_rate) {
   sc.gpio_cfg.ws = (gpio_num_t)HALO_PIN_LRCK, sc.gpio_cfg.dout = (gpio_num_t)HALO_PIN_DOUT;
   sc.gpio_cfg.din = I2S_GPIO_UNUSED;
   i2s_channel_init_std_mode(tx, &sc);
+  sc.gpio_cfg.dout = I2S_GPIO_UNUSED, sc.gpio_cfg.din = (gpio_num_t)HALO_PIN_DIN;  // the same clocks, the mics' data
+  if (i2s_channel_init_std_mode(rx, &sc) != ESP_OK) i2s_del_channel(rx), rx = nullptr;
   i2s_channel_enable(tx);
   // ES8311: сброс и включение, MCLK с вывода, все такты; делители для MCLK = 256·fs (pre_div 1, ×1, adc/dac div 1,
   // одинарная скорость, LRCK = MCLK/256, BCLK = MCLK/4, OSR 0x10)
@@ -110,4 +121,122 @@ void halo_audio_volume(int v) {
 
 int halo_audio_get_volume() {
   return volume;
+}
+
+int halo_audio_rate() {
+  return tx ? rate : 0;
+}
+
+// ---------- Microphones: ES7210 ----------
+static volatile HaloMicSink mic_sink;
+static volatile bool mic_want, mic_dirty = true;
+static volatile int mic_gain = 30, mic_ch;
+static TaskHandle_t mic_task_h;
+
+static void em_w(uint8_t r, uint8_t v) {
+  const uint8_t b[2] = {r, v};
+  i2c_master_transmit(em, b, 2, 20);
+}
+
+static uint8_t em_r(uint8_t r) {
+  uint8_t v = 0;
+  i2c_master_transmit_receive(em, &r, 1, &v, 1, 20);
+  return v;
+}
+
+static uint8_t em_gain_code(int db) {  // 0..14: 0, 3, … 33 dB, then 34.5, 36, 37.5
+  return db >= 37 ? 14 : db >= 36 ? 13 : db >= 34 ? 12 : (uint8_t)constrain(db / 3, 0, 11);
+}
+
+static void em_init() {  // slave, I2S 16 bit, MCLK = 256·fs, MIC1 and MIC2
+  em_w(0x00, 0xFF), em_w(0x00, 0x41);  // reset
+  em_w(0x01, 0x1F);                    // all clocks off while setting up
+  em_w(0x09, 0x30), em_w(0x0A, 0x30);  // chip state and power-on cycles
+  em_w(0x40, 0xC3);                    // analog: VDDA 3.3 V, VMID 5 kΩ start
+  em_w(0x41, 0x70), em_w(0x42, 0x70);  // mic bias 2.87 V
+  em_w(0x07, 0x20);                    // OSR
+  em_w(0x02, 0xC1);                    // adc_div 1, clock doubler, DLL
+  em_w(0x04, 0x01), em_w(0x05, 0x00);  // LRCK = MCLK / 256
+  em_w(0x11, (em_r(0x11) & 0x1C) | 0x60);  // 16 bits, I2S normal
+  em_w(0x12, 0x00);                    // ADC1/2 -> SDOUT1
+  for (int i = 0; i < 4; i++) em_w(0x43 + i, em_r(0x43 + i) & ~0x10);
+  em_w(0x4B, 0xFF), em_w(0x4C, 0xFF);  // MIC1/2 and MIC3/4 powered down
+}
+
+static void em_start() {
+  em_w(0x01, 0x14);                    // clocks on for ADC1/2 (0x1F with 0x0B cleared)
+  em_w(0x06, 0x00);                    // power up
+  em_w(0x47, 0x00), em_w(0x48, 0x00);  // MIC1, MIC2 power
+  em_w(0x4B, 0x00);                    // MIC1/2 bias and ADC
+  const uint8_t g = 0x10 | em_gain_code(mic_gain);
+  em_w(0x43, g), em_w(0x44, g);
+}
+
+static void em_stop() {
+  em_w(0x47, 0xFF), em_w(0x48, 0xFF), em_w(0x49, 0xFF), em_w(0x4A, 0xFF);
+  em_w(0x4B, 0xFF), em_w(0x4C, 0xFF);
+  em_w(0x01, 0x7F), em_w(0x06, 0x07);
+}
+
+static void mic_task(void *) {
+  static int16_t st[FRAMES * 2], mono[FRAMES];
+  bool on = false;
+  em_init();
+  for (;;) {
+    const bool want = mic_want;
+    if (want != on) {
+      on = want;
+      if (on) em_start(), i2s_channel_enable(rx);
+      else i2s_channel_disable(rx), em_stop();
+      mic_dirty = false;
+      LOG("mic: %s\n", on ? "on" : "off");
+    }
+    if (on && mic_dirty) {
+      mic_dirty = false;
+      const uint8_t g = 0x10 | em_gain_code(mic_gain);
+      em_w(0x43, g), em_w(0x44, g);
+    }
+    if (!on) {
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(200));
+      continue;
+    }
+    size_t got = 0;
+    if (i2s_channel_read(rx, st, sizeof(st), &got, pdMS_TO_TICKS(100)) != ESP_OK || got < 4) continue;
+    const int n = got / 4, ch = mic_ch;
+    for (int i = 0; i < n; i++) {
+      const int l = st[2 * i], r = st[2 * i + 1];
+      mono[i] = ch == 1 ? l : ch == 2 ? r : (l + r) / 2;
+    }
+    const HaloMicSink sink = mic_sink;
+    if (sink) sink(mono, n);
+  }
+}
+
+bool halo_mic_on(HaloMicSink sink) {
+  if (!tx || !rx) return false;
+  if (!em) {
+    em = ht_i2c_device(0x40);
+    if (!em) return LOG("mic: ES7210 NOT FOUND\n"), false;
+  }
+  mic_sink = sink, mic_want = true;
+  if (!mic_task_h) xTaskCreatePinnedToCore(mic_task, "halo_mic", 3072, nullptr, 5, &mic_task_h, 0);
+  else xTaskNotifyGive(mic_task_h);
+  return true;
+}
+
+void halo_mic_off() {
+  mic_want = false;
+  if (mic_task_h) xTaskNotifyGive(mic_task_h);
+}
+
+bool halo_mic_is_on() {
+  return mic_want;
+}
+
+void halo_mic_gain(int db) {
+  mic_gain = constrain(db, 0, 37), mic_dirty = true;
+}
+
+void halo_mic_channel(int ch) {
+  mic_ch = constrain(ch, 0, 2);
 }

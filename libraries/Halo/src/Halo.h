@@ -81,6 +81,17 @@ typedef int (*HaloAudioFill)(int16_t *buf, int n);
 bool halo_audio_begin(HaloAudioFill fill, int sample_rate = 22050);
 void halo_audio_volume(int v);  // 0..100 (громкость кодека; 60 — как в AmoledAudio)
 int halo_audio_get_volume();
+int halo_audio_rate();          // the I2S sample rate (0 — halo_audio_begin not called yet)
+// Microphones: the ES7210 (I2C 0x40, two mics), on the speaker's I2S in full duplex — the same sample rate
+// (halo_audio_begin first). On: the sink is called from the mic task (core 0) with n mono 16-bit samples (256 at a
+// time); off: the channel stops and the mics power down. Gain 0..37 dB (steps of 3, then 34.5, 36, 37.5); channel:
+// 0 — both mics mixed, 1 — MIC1 (left), 2 — MIC2 (right)
+typedef void (*HaloMicSink)(const int16_t *buf, int n);
+bool halo_mic_on(HaloMicSink sink);
+void halo_mic_off();
+bool halo_mic_is_on();
+void halo_mic_gain(int db);
+void halo_mic_channel(int ch);
 // Касания: выключить (блокировка) — палец не виден никому; halo_finger_blocked() — коснулись, пока выключены (раз на
 // касание: показать подсказку)
 void halo_touch_on(bool on);

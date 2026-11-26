@@ -1,5 +1,4 @@
-// display.h — the "Display" screen (Settings -> Display): the screen's brightness, and the BOOT button that turns the
-// screen off and on.
+// display.h — the "Display" screen (Settings -> Display): the screen's brightness, and the PWR lock.
 //
 // The slider is WearKit's (demo_slider.h: Wear OS 6 InlineSlider, numbers — docs/research/notes/pickers_progress.md)
 // ported to Halo: a 52 dp pill with "−" and "+" at its ends (zones of 48 dp), the bar between them — the filled part
@@ -9,10 +8,9 @@
 // catches up with a new value in 150 ms along (0, 0, 0, 1) — sharp at first, soft at the end — and the brightness of
 // the screen glides along with it. The level is kept in flash (settings.h) and applied at start.
 //
-// BOOT (anywhere, any screen) — power.h: the brightness fades to zero in about 0.25 s here (dp_power), then the panel
-// goes dark and the board sleeps; a touch, BOOT or picking it up — the screen at full brightness at once. Always On
-// (power.h) sets the panel's brightness itself (pw_bright) and keeps the panel lit at zero (pw_keep_lit). Command
-// boot — the same press from the serial port.
+// Going idle (power.h): the brightness fades to zero in about 0.25 s here (dp_power); Always On (power.h) then sets
+// the panel's brightness itself (pw_bright) and keeps the panel lit at zero (pw_keep_lit). BOOT is the assistant's
+// push-to-talk (assistant.h).
 //
 // The lock (PWR, anywhere): a click locks — touches stop working (halo_touch_on: no taps, swipes or gestures) and the
 // brightness glides down to the slider's lowest step; a long press (~1.5 s, the power chip decides; holding 6–10 s
@@ -74,7 +72,7 @@ static uint8_t dp_start_level() {  // the first frame's brightness: the slider's
 static void display_build() {
   dp_mid_head = halo_text_mid(t_title, "Display");
   dp_mid_label = halo_text_mid(t20, "Brightness");
-  dp_mid_hint = halo_text_mid(t20, "Press BOOT to turn the screen off");
+  dp_mid_hint = halo_text_mid(t20, "Press PWR to lock the screen");
   dp_mid_icon = halo_text_mid(ic32, "");
   halo_ease_make(EASE_SHARP, 0, 0, 0, 1);
   K_DP_POWER = halo_spring(0.25f, 1);
@@ -147,7 +145,7 @@ static void display_update(float dt) {
 static void display_layout(const HaloView &v) {
   text_mid(dp_head, t_title, "Display", dp_mid_head, CX, DP_HEAD_Y, 1, TEXT, 1, &halo_black);
   text_mid(dp_label, t20, "Brightness", dp_mid_label, CX, DP_LABEL_Y, 1, DIM, 1, &halo_black);
-  text_mid(dp_hint, t20, "Press BOOT to turn the screen off", dp_mid_hint, CX, DP_HINT_Y, 1, DIM, 1, &halo_black);
+  text_mid(dp_hint, t20, "Press PWR to lock the screen", dp_mid_hint, CX, DP_HINT_Y, 1, DIM, 1, &halo_black);
   dp_head.on_black = dp_label.on_black = dp_hint.on_black = true;
   halo_view_commit(dp_head, v), halo_view_commit(dp_label, v), halo_view_commit(dp_hint, v);
   // The pill and the pressed buttons' circles under the icons

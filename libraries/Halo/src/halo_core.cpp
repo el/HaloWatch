@@ -140,7 +140,8 @@ struct Command {
   const char *name;
   void (*fn)(const char *args);
 };
-static Command commands[48];
+#define MAX_COMMANDS 96
+static Command commands[MAX_COMMANDS];
 static int command_count;
 
 void halo_command(const char *name, void (*fn)(const char *args)) {
@@ -149,7 +150,7 @@ void halo_command(const char *name, void (*fn)(const char *args)) {
       commands[i].fn = fn;
       return;
     }
-  if (command_count < 48) commands[command_count++] = {name, fn};
+  if (command_count < MAX_COMMANDS) commands[command_count++] = {name, fn};
 }
 
 static int hc_command_names(const char **out, int max) {
@@ -176,7 +177,7 @@ static void hc_trace_tick();
 static const char *reset_name(esp_reset_reason_t r);
 
 void hc_loop() {
-  static char line[64];
+  static char line[1600];  // long enough for settings: an API key, a Wi-Fi password, the assistant's prompt
   static size_t len;
   while (Serial.available()) {
     const char ch = Serial.read();
@@ -195,6 +196,7 @@ void hc_loop() {
 void hc_begin(const char *name) {
 #if ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
   Serial.setTxBufferSize(4096);
+  Serial.setRxBufferSize(4096);  // long command lines (settings from the web controller) arrive in one go
 #endif
   Serial.begin(115200);
   serial_wait(false);

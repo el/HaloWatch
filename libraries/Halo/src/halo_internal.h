@@ -23,6 +23,7 @@
 #define HALO_PIN_BCLK 9
 #define HALO_PIN_LRCK 45
 #define HALO_PIN_DOUT 8
+#define HALO_PIN_DIN 10  // ES7210 SDOUT1: the microphones
 #define HALO_PIN_PA 46
 
 // ---------- Дисплей (halo_display.cpp) ----------

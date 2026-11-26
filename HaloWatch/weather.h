@@ -1,6 +1,8 @@
 // weather.h — the "Weather" screen, laid out 1:1 like design/weather2_mockup.webp (the Pixel Watch weather tile):
 // the city, the current weather icon with the temperature and today's high and low, and a dark pill with the next three
-// hours (icon and time). Instead of the mockup's icon at the top — our clock along the top edge, as on the gallery;
+// hours (icon and time). Real weather from Open-Meteo (no key needed; at the bottom of this file): one page per city
+// of the wx_cities setting (up to four, "Name" or "Name, Country" or "lat,lon", separated by ";"), every wx_every
+// minutes (30) and when the cities change; page 0 is also the face's pill. Instead of the mockup's icon at the top — our clock along the top edge, as on the gallery;
 // the weather icons are ours (assets/gen_icons.py), sized like the mockup's. Four pages — four cities — slide
 // sideways exactly like the gallery's "Pages": the leaving page shrinks to its edge and dims, the dot at the bottom
 // stretches like a worm. Page 0 is "here": the same weather as the watch face shows (the face changes it).
@@ -29,23 +31,13 @@ struct WxDay {
   uint8_t kind;
   uint8_t hour_kind[WX_HOURS];  // this hour and the next two
 };
-// "Here": the watch face cycles through these (a tap on the face); page 0 shows the current one
-static const WxDay WX_HERE[] = {
-    {19, 21, 12, WX_PARTLY, {WX_PARTLY, WX_SUN, WX_PARTLY}},
-    {23, 25, 14, WX_SUN, {WX_SUN, WX_SUN, WX_PARTLY}},
-    {16, 17, 11, WX_CLOUD, {WX_CLOUD, WX_PARTLY, WX_CLOUD}},
-    {12, 13, 9, WX_RAIN, {WX_RAIN, WX_CLOUD, WX_RAIN}},
-};
-#define WX_HERE_N (int)(sizeof(WX_HERE) / sizeof(WX_HERE[0]))
-static const char *const WX_CITY[WX_PAGES] = {"San Francisco", "New York", "Boston", "Seattle"};
-static const WxDay WX_AWAY[WX_PAGES - 1] = {
-    {21, 23, 13, WX_SUN, {WX_SUN, WX_PARTLY, WX_PARTLY}},
-    {15, 16, 9, WX_CLOUD, {WX_PARTLY, WX_CLOUD, WX_CLOUD}},
-    {11, 12, 8, WX_RAIN, {WX_RAIN, WX_RAIN, WX_CLOUD}},
-};
+// What the pages show (the frame task's copy; the fetch task fills wx_next and bumps wx_next_ver)
+static int wx_n = 1;                  // pages: one per city (1..WX_PAGES)
+static WxDay wx_days[WX_PAGES];
+static bool wx_ok[WX_PAGES];          // has data (else "--")
+static char wx_city_name[WX_PAGES][32] = {"Weather"};
 static const HaloImage *const WX_BIG[4] = {&img_wx, &img_wsun, &img_wcloud, &img_wrain};
 static const HaloImage *const WX_SM[4] = {&img_wx_sm, &img_wsun_sm, &img_wcloud_sm, &img_wrain_sm};
-static int wx_here;  // which of WX_HERE is "now"
 
 #define WX_SCALE 1.2f  // the screen is 1.2x the mockup (keep in sync with halo.conf and WX2_SCALE in gen_icons.py)
 // Mockup coordinates -> screen, scaled around the screen center; sizes — just times WX_SCALE
@@ -90,7 +82,7 @@ static float wx_now_top, wx_now_bottom, wx_hl_top, wx_hl_bottom;
 static bool wx_drag;
 
 static const WxDay &wx_day(int page) {
-  return page == 0 ? WX_HERE[wx_here] : WX_AWAY[page - 1];
+  return wx_days[page];
 }
 
 // Strings of all pages; hours — this one and the next two, as on the mockup: "7AM" (12 hours, as everywhere)
@@ -98,9 +90,13 @@ static void wx_fill(bool animate = false) {
   for (int p = 0; p < WX_PAGES; p++) {
     const WxDay &d = wx_day(p);
     WxPage &w = wxp[p];
-    snprintf(w.now, sizeof(w.now), "%d°", d.now);
-    snprintf(w.hi, sizeof(w.hi), "%d", d.hi);
-    snprintf(w.lo, sizeof(w.lo), "%d", d.lo);
+    if (wx_ok[p]) {
+      snprintf(w.now, sizeof(w.now), "%d°", d.now);
+      snprintf(w.hi, sizeof(w.hi), "%d", d.hi);
+      snprintf(w.lo, sizeof(w.lo), "%d", d.lo);
+    } else {
+      strcpy(w.now, "--°"), strcpy(w.hi, "--"), strcpy(w.lo, "--");
+    }
     halo_roll_set(w.t_now, w.now, animate);
   }
   int h = 12;
@@ -138,6 +134,7 @@ static void wx_image_ink(const HaloImage &im, float &x0, float &x1, float &y0, f
 }
 
 static void weather_build() {
+  for (auto &d : wx_days) d = {0, 0, 0, WX_PARTLY, {WX_PARTLY, WX_PARTLY, WX_PARTLY}};
   wx_mid_city = halo_text_mid(t_title, "San Francisco");
   wx_mid_hl = halo_text_mid(w_hl, "0123456789");
   for (auto &w : wxp) {
@@ -165,7 +162,7 @@ static void weather_update(float dt) {
     if (f.down) {
       const float raw = wx_g0 - (f.x - f.x0) / W;
       wx_pg.x = raw < 0 ? halo_rubber(raw * W) / W
-              : raw > WX_PAGES - 1 ? WX_PAGES - 1 + halo_rubber((raw - WX_PAGES + 1) * W) / W : raw;
+              : raw > wx_n - 1 ? wx_n - 1 + halo_rubber((raw - wx_n + 1) * W) / W : raw;
       wx_pg.v = -f.vx / W;
     } else {
       const int p = (int)lroundf(wx_g0);
@@ -173,11 +170,11 @@ static void weather_update(float dt) {
       int to = p;
       if (fr > 0.1f || f.vx < -400) to = p + 1;
       if (fr < -0.1f || f.vx > 400) to = p - 1;
-      wx_pg.target = constrain(to, 0, WX_PAGES - 1);
+      wx_pg.target = constrain(to, 0, wx_n - 1);
       wx_drag = false;
     }
   }
-  if (!wx_drag) halo_spring_run(wx_pg, K_PAGER, dt);
+  if (!wx_drag) wx_pg.target = constrain(wx_pg.target, 0, wx_n - 1), halo_spring_run(wx_pg, K_PAGER, dt);
   for (auto &w : wxp) halo_roll_update(w.t_now, dt);
 }
 
@@ -224,14 +221,14 @@ static void weather_layout(const HaloView &v) {
   for (int i = 0; i < WX_PAGES; i++) {
     // The leaving page: scale 1 -> 0.55 toward the edge it leaves through, dims to 0.5 (as on "Pages")
     const float off = i - p, f = halo_clamp01(fabsf(off)), s = 1 - 0.45f * f;
-    const float k = fabsf(off) < 0.999f ? 1 - 0.5f * f : 0;
+    const float k = fabsf(off) < 0.999f && i < wx_n ? 1 - 0.5f * f : 0;  // pages past the last city: hidden
     const float pivot = off < 0 ? 0 : W, cx = pivot + (CX + off * W - pivot) * s;
     auto X = [&](float x) { return cx + (x - CX) * s; };
     auto Y = [&](float y) { return CX + (y - CX) * s; };
     WxPage &w = wxp[i];
     const WxDay &d = wx_day(i);
     // City; the current weather icon, the temperature, today's high and low
-    wx_text(w.city, t_title, WX_CITY[i], wx_mid_city, 1, X(WX_CITY_X), Y(WX_CITY_Y), s, WX_WHITE, k, &halo_black);
+    wx_text(w.city, t_title, wx_city_name[i], wx_mid_city, 1, X(WX_CITY_X), Y(WX_CITY_Y), s, WX_WHITE, k, &halo_black);
     // The row (WX_ROW_GAP above): the temperature's digits centered at CX by their cells, then everything around it by
     // what is really drawn
     int nd = 0;
@@ -270,27 +267,28 @@ static void weather_layout(const HaloView &v) {
   // Page dots along the bottom arc (as on "Pages": 12 px every 20 px on r = 217, the current one — a worm). While the
   // swipe back is pulled from the bottom, the dots lift a little and the current one stretches up after the finger
   const float P = halo_nav_pull(), lift = 26 * (1 - expf(-P / 140)), stretch = 30 * (1 - expf(-P / 120));
-  const float R = 217, step = 20 / R, a0 = HALO_PI + step * (WX_PAGES - 1) / 2;
-  for (int i = 0; i < WX_PAGES; i++) {
+  const float R = 217, step = 20 / R, a0 = HALO_PI + step * (wx_n - 1) / 2;
+  for (int i = 0; i < WX_PAGES; i++) {  // one city: no dots at all
     const float a = a0 - i * step;
     HaloItem &d = wx_dot[i];
     d.kind = HI_CIRCLE, d.x = CX + R * sinf(a), d.y = CX - R * cosf(a) - lift, d.r = 6, d.scale = 1, d.color = 0xFFFFFF;
-    d.alpha = 0.3f, d.on_black = true;
+    d.alpha = i < wx_n && wx_n > 1 ? 0.3f : 0, d.on_black = true;
     halo_view_commit(d, v);
   }
-  const float pc = halo_clamp01(p / (WX_PAGES - 1)) * (WX_PAGES - 1);
+  const float pc = wx_n > 1 ? halo_clamp01(p / (wx_n - 1)) * (wx_n - 1) : 0;
   const int i0 = (int)pc;
   const float fr = pc - i0, head = fminf(1, fr * 2), tail = fmaxf(0, fr * 2 - 1);
   const float aa = a0 - (i0 + tail) * step, ab = a0 - (i0 + head) * step;
   const bool pulled = stretch > 0.3f;
   wx_worm.kind = HI_ARC, wx_worm.x = CX, wx_worm.y = CX - lift, wx_worm.r = R, wx_worm.w = 12, wx_worm.scale = 1;
   wx_worm.a0 = fminf(aa, ab), wx_worm.a1 = fmaxf(aa, ab) + 0.0001f, wx_worm.color = 0xFFFFFF;
-  wx_worm.alpha = pulled ? 0 : 1, wx_worm.on_black = true;
+  wx_worm.alpha = pulled || wx_n < 2 ? 0 : 1, wx_worm.on_black = true;
   halo_view_commit(wx_worm, v);
   // Pulled: the current dot becomes a capsule growing upward from its place
   const float ac = a0 - lroundf(pc) * step, dx = CX + R * sinf(ac), dy = CX - R * cosf(ac) - lift;
   wx_pull.kind = HI_RRECT, wx_pull.x = dx, wx_pull.y = dy - stretch / 2, wx_pull.w = 12, wx_pull.h = 12 + stretch;
-  wx_pull.r = 6, wx_pull.scale = 1, wx_pull.color = 0xFFFFFF, wx_pull.alpha = pulled ? 1 : 0, wx_pull.on_black = true;
+  wx_pull.r = 6, wx_pull.scale = 1, wx_pull.color = 0xFFFFFF, wx_pull.alpha = pulled && wx_n > 1 ? 1 : 0;
+  wx_pull.on_black = true;
   halo_view_commit(wx_pull, v);
 }
 
@@ -307,3 +305,205 @@ static void weather_draw() {
 
 // In the gallery: to the face — swipe up from the bottom edge, as back over the face
 static const HaloScreen WEATHER = {weather_enter, weather_update, weather_layout, weather_draw, false, HALO_HOME_UP};
+
+// ---------- Open-Meteo: geocoding (once per city name) and the forecast ----------
+// https://open-meteo.com — free, no key. The forecast: the current temperature and weather code, today's high and
+// low, the weather codes of this hour and the next two; the time zone of the place ("timezone=auto": its UTC offset
+// becomes the watch's when the tz setting is "auto", net.h). WMO weather codes -> our four icons.
+struct WxCity {
+  char query[48];  // as typed
+  char name[32];   // shown
+  float lat, lon;
+  bool geo;        // lat/lon known
+};
+static WxCity wx_cities[WX_PAGES];
+static WxDay wx_next[WX_PAGES];
+static bool wx_next_ok[WX_PAGES];
+static char wx_next_name[WX_PAGES][32];
+static int wx_next_n = 1;
+static volatile uint32_t wx_next_ver, wx_seen_ver;
+static portMUX_TYPE wx_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool wx_cmd_update;
+static volatile uint32_t wx_updated_ms;  // the last successful update (0 — never)
+static TaskHandle_t wx_task_h;
+
+static uint8_t wx_kind(int wmo) {
+  if (wmo <= 1) return WX_SUN;                   // clear, mainly clear
+  if (wmo == 2) return WX_PARTLY;                // partly cloudy
+  if (wmo == 3 || wmo == 45 || wmo == 48) return WX_CLOUD;  // overcast, fog
+  if ((wmo >= 71 && wmo <= 77) || wmo == 85 || wmo == 86) return WX_CLOUD;  // snow: no icon of its own
+  return WX_RAIN;                                // drizzle, rain, showers, thunderstorms
+}
+
+static void wx_urlenc(const char *s, char *out, size_t cap_) {
+  size_t n = 0;
+  for (; *s && n + 4 < cap_; s++) {
+    const uint8_t c = *s;
+    if (isalnum(c) || c == '-' || c == '.' || c == '_') out[n++] = c;
+    else n += snprintf(out + n, cap_ - n, "%%%02X", c);
+  }
+  out[n] = 0;
+}
+
+static void wx_trim(char *s) {
+  char *a = s;
+  while (*a == ' ') a++;
+  memmove(s, a, strlen(a) + 1);
+  for (size_t n = strlen(s); n && s[n - 1] == ' ';) s[--n] = 0;
+}
+
+static bool wx_geocode(WxCity &c, char *buf, int cap_) {
+  float la, lo;
+  char extra;
+  if (sscanf(c.query, "%f , %f%c", &la, &lo, &extra) == 2) {  // "lat,lon"
+    c.lat = la, c.lon = lo, c.geo = true;
+    snprintf(c.name, sizeof(c.name), "%.2f, %.2f", la, lo);
+    return true;
+  }
+  char name[48], hint[48] = "", enc[100], url[220];
+  strlcpy(name, c.query, sizeof(name));
+  if (char *comma = strchr(name, ',')) strlcpy(hint, comma + 1, sizeof(hint)), *comma = 0;
+  wx_trim(name), wx_trim(hint);
+  strlcpy(c.name, name, sizeof(c.name));
+  wx_urlenc(name, enc, sizeof(enc));
+  snprintf(url, sizeof(url), "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=10&language=en&format=json", enc);
+  if (net_get(url, buf, cap_) < 0) return false;
+  char *res = js_find(buf, "results");
+  if (!res) return LOG("weather: \"%s\" not found\n", c.query), false;
+  // The first result, or the first whose country / region / country code matches what came after the comma
+  char *pick = nullptr;
+  for (char *p = res; (p = strstr(p, "\"latitude\"")); p++) {
+    if (!pick) pick = p;
+    if (!*hint) break;
+    char *end = strchr(p, '{');  // the next result (results hold no nested objects)
+    char save = 0;
+    if (end) save = *end, *end = 0;
+    char *back = p;  // the result's object starts a little before its latitude
+    while (back > res && *back != '{') back--;
+    const bool match = strcasestr(back, hint) != nullptr;
+    if (end) *end = save;
+    if (match) {
+      pick = p;
+      break;
+    }
+  }
+  if (!pick) return false;
+  c.lat = strtof(js_find(pick, "latitude"), nullptr);
+  char *lon = js_find(pick, "longitude");
+  if (!lon) return false;
+  c.lon = strtof(lon, nullptr), c.geo = true;
+  LOG("weather: %s -> %.3f, %.3f\n", c.query, c.lat, c.lon);
+  return true;
+}
+
+static float wx_first_num(char *from, const char *key) {  // "key":[x, ...] or "key":x
+  char *v = from ? js_find(from, key) : nullptr;
+  if (!v) return NAN;
+  if (*v == '[') v++;
+  return strtof(v, nullptr);
+}
+
+static bool wx_forecast(const WxCity &c, WxDay &d, bool first, char *buf, int cap_) {
+  char url[400];
+  snprintf(url, sizeof(url),
+           "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,weather_code"
+           "&hourly=weather_code&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&forecast_hours=3"
+           "&timezone=auto&temperature_unit=%s",
+           c.lat, c.lon, cfg.fahrenheit ? "fahrenheit" : "celsius");
+  if (net_get(url, buf, cap_) < 0) return false;
+  char *cur = js_find(buf, "current"), *daily = js_find(buf, "daily"), *hourly = js_find(buf, "hourly");
+  const float t = wx_first_num(cur, "temperature_2m"), code = wx_first_num(cur, "weather_code");
+  const float hi = wx_first_num(daily, "temperature_2m_max"), lo = wx_first_num(daily, "temperature_2m_min");
+  if (isnan(t) || isnan(code) || isnan(hi) || isnan(lo)) return LOG("weather: unexpected reply for %s\n", c.name), false;
+  d.now = constrain(lroundf(t), -99, 127), d.hi = constrain(lroundf(hi), -99, 127), d.lo = constrain(lroundf(lo), -99, 127);
+  d.kind = wx_kind((int)code);
+  char *hc = hourly ? js_find(hourly, "weather_code") : nullptr;
+  for (int i = 0; i < WX_HOURS; i++) {
+    d.hour_kind[i] = d.kind;
+    if (hc && (*hc == '[' || *hc == ',')) d.hour_kind[i] = wx_kind(strtol(hc + 1, &hc, 10));
+  }
+  if (first) {
+    const float off = wx_first_num(buf, "utc_offset_seconds");
+    if (!isnan(off)) net_set_auto_offset((int32_t)off);
+  }
+  return true;
+}
+
+static void wx_update() {
+  // The cities from the setting; a changed name is looked up again
+  char list[160];
+  {
+    CfgLock l;
+    strlcpy(list, cfg.cities, sizeof(list));
+  }
+  int n = 0;
+  for (char *save = nullptr, *tok = strtok_r(list, ";", &save); tok && n < WX_PAGES; tok = strtok_r(nullptr, ";", &save)) {
+    wx_trim(tok);
+    if (!*tok) continue;
+    WxCity &c = wx_cities[n++];
+    if (strcmp(c.query, tok)) strlcpy(c.query, tok, sizeof(c.query)), c.geo = false, strlcpy(c.name, tok, sizeof(c.name));
+  }
+  if (!n) n = 1, strcpy(wx_cities[0].query, ""), strcpy(wx_cities[0].name, "Set a city"), wx_cities[0].geo = false;
+  static char *buf = (char *)heap_caps_malloc(24 * 1024, MALLOC_CAP_SPIRAM);
+  WxDay d[WX_PAGES] = {};
+  bool ok[WX_PAGES] = {}, any = false;
+  if (buf && *wx_cities[0].query && net_acquire(25000)) {
+    for (int i = 0; i < n; i++) {
+      WxCity &c = wx_cities[i];
+      if (!c.geo) wx_geocode(c, buf, 24 * 1024);
+      if (c.geo) ok[i] = wx_forecast(c, d[i], i == 0, buf, 24 * 1024);
+      if (!ok[i] && wx_seen_ver) {  // keep the last good numbers of a city that failed this time
+        portENTER_CRITICAL(&wx_mux);
+        if (i < wx_next_n && wx_next_ok[i] && !strcmp(wx_next_name[i], c.name)) d[i] = wx_next[i], ok[i] = true;
+        portEXIT_CRITICAL(&wx_mux);
+      }
+      any |= ok[i];
+    }
+    net_release_soon();
+  }
+  portENTER_CRITICAL(&wx_mux);
+  wx_next_n = n;
+  for (int i = 0; i < n; i++) wx_next[i] = d[i], wx_next_ok[i] = ok[i], strlcpy(wx_next_name[i], wx_cities[i].name, 32);
+  wx_next_ver++;
+  portEXIT_CRITICAL(&wx_mux);
+  if (any) wx_updated_ms = millis() | 1;
+  LOG("weather: %s (%d %s)\n", any ? "updated" : "no data", n, n == 1 ? "city" : "cities");
+}
+
+static void wx_task(void *) {
+  uint32_t last_try = 0, seen_cfg = cfg_ver;
+  vTaskDelay(pdMS_TO_TICKS(1500));  // let Wi-Fi come up with the clock first
+  for (;;) {
+    const uint32_t now = millis(), every = (uint32_t)cfg.wx_every * 60000;
+    const bool cfg_changed = cfg_ver != seen_cfg;
+    const bool due = !last_try || (wx_updated_ms ? now - last_try > every : now - last_try > 120000);
+    if (due || wx_cmd_update || cfg_changed) {
+      seen_cfg = cfg_ver, wx_cmd_update = false, last_try = now;
+      wx_update();
+    }
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10000));
+  }
+}
+
+// The frame task, every frame: new numbers from the fetch task — onto the pages (rolling) and the face
+static bool wx_apply() {
+  if (wx_next_ver == wx_seen_ver) return false;
+  portENTER_CRITICAL(&wx_mux);
+  wx_seen_ver = wx_next_ver, wx_n = wx_next_n;
+  for (int i = 0; i < WX_PAGES; i++) {
+    wx_ok[i] = i < wx_n && wx_next_ok[i];
+    if (i < wx_n) wx_days[i] = wx_next[i], strlcpy(wx_city_name[i], wx_next_name[i], 32);
+  }
+  portEXIT_CRITICAL(&wx_mux);
+  wx_fill(true);
+  return true;
+}
+
+static void weather_net_begin() {
+  xTaskCreatePinnedToCore(wx_task, "weather", 8192, nullptr, 2, &wx_task_h, 0);
+  halo_command("weather", [](const char *) {
+    wx_cmd_update = true;
+    xTaskNotifyGive(wx_task_h);
+    Serial.println("OK weather");
+  });
+}
