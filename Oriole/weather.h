@@ -8,13 +8,13 @@
 // stretches like a worm. Page 0 is "here": the same weather as the watch face shows (the face changes it).
 //
 // Opened from the gallery (back — swipe from the left edge) or by a tap on the face's weather pill (back — swipe up
-// from the bottom edge: the dots lift and the current one stretches up after the finger; halo_nav_face_open).
+// from the bottom edge: the dots lift and the current one stretches up after the finger; oriole_nav_face_open).
 //
-// Everything sits on black and nothing moves at rest, so Halo sends nothing to the display after the screen
+// Everything sits on black and nothing moves at rest, so Oriole sends nothing to the display after the screen
 // has been drawn once. Positions are measured from the mockup (screen circle 1229 px -> 466 px, scale 0.3792), in
-// board pixels: text by the middle of its letters (halo_text_mid) and by its ink — centered or right-aligned, as
+// board pixels: text by the middle of its letters (oriole_text_mid) and by its ink — centered or right-aligned, as
 // the mockup shows it, whatever the side bearings of the digits (wx_ink_x); icons by their centers. Font sizes come
-// from the letter heights, weights from the amount of "ink" (assets/halo.conf). The whole screen is then drawn
+// from the letter heights, weights from the amount of "ink" (assets/oriole.conf). The whole screen is then drawn
 // WX_SCALE times larger around the screen center (asked for: closer to the edges); fonts and icons are made at that
 // size, not stretched at runtime.
 // Included from Oriole.ino after the shared helpers (TEXT, the baked clock mask tt_mask, K_PAGER).
@@ -32,16 +32,20 @@ struct WxDay {
   uint8_t hour_kind[WX_HOURS];  // this hour and the next two
   int32_t utc_off;               // the place's UTC offset, s (the World clock, apps.h)
   bool off_ok;
+  // The week (the Forecast screen, apps.h): today and six more days; sunrise and sunset today, minutes after 0:00
+  uint8_t days, wk_kind[7];
+  int8_t wk_hi[7], wk_lo[7];
+  int16_t rise, set;  // −1 — not known
 };
 // What the pages show (the frame task's copy; the fetch task fills wx_next and bumps wx_next_ver)
 static int wx_n = 1;                  // pages: one per city (1..WX_PAGES)
 static WxDay wx_days[WX_PAGES];
 static bool wx_ok[WX_PAGES];          // has data (else "--")
 static char wx_city_name[WX_PAGES][32] = {"Weather"};
-static const HaloImage *const WX_BIG[4] = {&img_wx, &img_wsun, &img_wcloud, &img_wrain};
-static const HaloImage *const WX_SM[4] = {&img_wx_sm, &img_wsun_sm, &img_wcloud_sm, &img_wrain_sm};
+static const OrioleImage *const WX_BIG[4] = {&img_wx, &img_wsun, &img_wcloud, &img_wrain};
+static const OrioleImage *const WX_SM[4] = {&img_wx_sm, &img_wsun_sm, &img_wcloud_sm, &img_wrain_sm};
 
-#define WX_SCALE 1.2f  // the screen is 1.2x the mockup (keep in sync with halo.conf and WX2_SCALE in gen_icons.py)
+#define WX_SCALE 1.2f  // the screen is 1.2x the mockup (keep in sync with oriole.conf and WX2_SCALE in gen_icons.py)
 // Mockup coordinates -> screen, scaled around the screen center; sizes — just times WX_SCALE
 static inline float wsc(float v) {
   return CX + (v - CX) * WX_SCALE;
@@ -71,16 +75,16 @@ static const float WX_COL[WX_HOURS] = {147.8f, 233.3f, 317.65f};  // hourly colu
 
 struct WxPage {
   char now[8], hi[8], lo[8];
-  HaloRoll t_now;  // the temperature: tabular digits, a new value rolls in
-  HaloItem city, icon, t_hi, t_lo, pill, hicon[WX_HOURS], htime[WX_HOURS];
+  OrioleRoll t_now;  // the temperature: tabular digits, a new value rolls in
+  OrioleItem city, icon, t_hi, t_lo, pill, hicon[WX_HOURS], htime[WX_HOURS];
 };
 struct WxPages {
   WxPage p[WX_PAGES];
 };
 static WxPage (&wxp)[WX_PAGES] = psram_new<WxPages>().p;  // in PSRAM (Oriole.ino: psram_new)
 static char wx_hour[WX_HOURS][8];  // "7AM" ... — the same on every page
-static HaloItem wx_clock, wx_dot[WX_PAGES], wx_worm, wx_pull;
-static HaloSpring wx_pg;  // page (fractional while paging)
+static OrioleItem wx_clock, wx_dot[WX_PAGES], wx_worm, wx_pull;
+static OrioleSpring wx_pg;  // page (fractional while paging)
 static float wx_g0, wx_mid_city, wx_mid_hl, wx_mid_hour;
 // Digit rows from the line top (ink, as drawn): the temperature's and the high/low's
 static float wx_now_top, wx_now_bottom, wx_hl_top, wx_hl_bottom;
@@ -102,10 +106,10 @@ static void wx_fill(bool animate = false) {
     } else {
       strcpy(w.now, "--°"), strcpy(w.hi, "--"), strcpy(w.lo, "--");
     }
-    halo_roll_set(w.t_now, w.now, animate);
+    oriole_roll_set(w.t_now, w.now, animate);
   }
   int h = 12;
-  if (halo_clock_valid()) {
+  if (oriole_clock_valid()) {
     const time_t now = time(nullptr);
     struct tm t;
     localtime_r(&now, &t);
@@ -117,13 +121,13 @@ static void wx_fill(bool animate = false) {
   }
 }
 
-// Digits of a font, as Halo draws them: from the line top to the first and past the last row with ink (glyph ext rows)
+// Digits of a font, as Oriole draws them: from the line top to the first and past the last row with ink (glyph ext rows)
 // — by the flat digits "1" and "4": round ones (0, 3, 6, 8, 9) overshoot a row up and down, as in every font, and the
 // lines go along the flat ones (gen_icons.py, digit_band — the same reference)
-static void wx_digit_rows(const HaloFont &f, float &top, float &bottom) {
+static void wx_digit_rows(const OrioleFont &f, float &top, float &bottom) {
   top = 1e9f, bottom = -1e9f;
   for (uint32_t d : {(uint32_t)'1', (uint32_t)'4'}) {
-    const HaloMask *g = halo_glyph(f, d);
+    const OrioleMask *g = oriole_glyph(f, d);
     if (!g) continue;
     for (int r = 0; r < g->h; r++)
       if (g->ext[2 * r] <= g->ext[2 * r + 1]) top = fminf(top, g->oy + r), bottom = fmaxf(bottom, g->oy + r + 1);
@@ -131,7 +135,7 @@ static void wx_digit_rows(const HaloFont &f, float &top, float &bottom) {
 }
 
 // What an image really draws: the first and past the last column and row with ink (ext rows)
-static void wx_image_ink(const HaloImage &im, float &x0, float &x1, float &y0, float &y1) {
+static void wx_image_ink(const OrioleImage &im, float &x0, float &x1, float &y0, float &y1) {
   x0 = y0 = 1e9f, x1 = y1 = -1e9f;
   for (int r = 0; r < im.h; r++)
     if (im.ext[2 * r] <= im.ext[2 * r + 1])
@@ -140,34 +144,36 @@ static void wx_image_ink(const HaloImage &im, float &x0, float &x1, float &y0, f
 
 static void weather_build() {
   for (auto &d : wx_days) d = {0, 0, 0, WX_PARTLY, {WX_PARTLY, WX_PARTLY, WX_PARTLY}};
-  wx_mid_city = halo_text_mid(t_title, "San Francisco");
-  wx_mid_hl = halo_text_mid(w_hl, "0123456789");
+  wx_mid_city = oriole_text_mid(t_title, "San Francisco");
+  wx_mid_hl = oriole_text_mid(w_hl, "0123456789");
   for (auto &w : wxp) {
     w.t_now.tabular = true;
-    halo_roll_init(w.t_now, w_now, "0123456789", 0);
+    oriole_roll_init(w.t_now, w_now, "0123456789", 0);
   }
   wx_digit_rows(w_now, wx_now_top, wx_now_bottom);
   wx_digit_rows(w_hl, wx_hl_top, wx_hl_bottom);
-  wx_mid_hour = halo_text_mid(w_hour, "7AM");
+  wx_mid_hour = oriole_text_mid(w_hour, "7AM");
   wx_fill();
 }
 
+static void wx_open_forecast(int page);  // apps.h: the Forecast screen for a city
+
 static void weather_enter() {
   wx_fill();  // no rolling: the screen opens with its values in place
-  halo_spring_set(wx_pg, 0);
+  oriole_spring_set(wx_pg, 0);
   wx_drag = false;
 }
 
 // Paging — as on "Pages": sideways (not from the left edge: that is the gallery's swipe back); past 10 % or a flick
 // faster than 400 px/s — to the neighbour; a 2000/1 spring
 static void weather_update(float dt) {
-  HaloFinger &f = halo_finger;
-  if (f.drag_start && f.horiz && !f.owner && f.x0 > 30 * DP && halo_finger_claim(&wx_pg)) wx_g0 = wx_pg.x, wx_drag = true;
+  OrioleFinger &f = oriole_finger;
+  if (f.drag_start && f.horiz && !f.owner && f.x0 > 30 * DP && oriole_finger_claim(&wx_pg)) wx_g0 = wx_pg.x, wx_drag = true;
   if (wx_drag && f.owner == &wx_pg) {
     if (f.down) {
       const float raw = wx_g0 - (f.x - f.x0) / W;
-      wx_pg.x = raw < 0 ? halo_rubber(raw * W) / W
-              : raw > wx_n - 1 ? wx_n - 1 + halo_rubber((raw - wx_n + 1) * W) / W : raw;
+      wx_pg.x = raw < 0 ? oriole_rubber(raw * W) / W
+              : raw > wx_n - 1 ? wx_n - 1 + oriole_rubber((raw - wx_n + 1) * W) / W : raw;
       wx_pg.v = -f.vx / W;
     } else {
       const int p = (int)lroundf(wx_g0);
@@ -179,53 +185,54 @@ static void weather_update(float dt) {
       wx_drag = false;
     }
   }
-  if (!wx_drag) wx_pg.target = constrain(wx_pg.target, 0, wx_n - 1), halo_spring_run(wx_pg, K_PAGER, dt);
-  for (auto &w : wxp) halo_roll_update(w.t_now, dt);
+  if (!wx_drag) wx_pg.target = constrain(wx_pg.target, 0, wx_n - 1), oriole_spring_run(wx_pg, K_PAGER, dt);
+  if (f.tap && !f.owner && !wx_drag) wx_open_forecast((int)lroundf(wx_pg.x));  // a tap: the week (apps.h)
+  for (auto &w : wxp) oriole_roll_update(w.t_now, dt);
 }
 
-static void image_at(HaloItem &it, const HaloImage &im, float x, float y, float s, float a) {
+static void image_at(OrioleItem &it, const OrioleImage &im, float x, float y, float s, float a) {
   it.kind = HI_IMAGE, it.image = &im, it.x = x, it.y = y, it.scale = s, it.alpha = a, it.on_black = false;
 }
 
 // Where the anchor of a line goes (align 1 — its center, 2 — its right end) so that its ink, not its advance box, is
 // centered at / ends at x: digits have side bearings, and the mockup aligns what is drawn
 // What a line really draws: ink from ink0 to ink1 from its pen start, the pen advances by pen; false — nothing
-static bool wx_ink(const HaloFont &f, const char *s, float &ink0, float &ink1, float &pen) {
+static bool wx_ink(const OrioleFont &f, const char *s, float &ink0, float &ink1, float &pen) {
   pen = 0, ink0 = 1e9f, ink1 = -1e9f;
   while (*s) {
-    const HaloMask *g = halo_glyph(f, halo_utf8_next(s));
+    const OrioleMask *g = oriole_glyph(f, oriole_utf8_next(s));
     if (!g) continue;
     ink0 = fminf(ink0, pen + g->ox), ink1 = fmaxf(ink1, pen + g->ox + g->w), pen += g->adv;
   }
   return ink0 <= ink1;
 }
-static float wx_ink_w(const HaloFont &f, const char *s) {
+static float wx_ink_w(const OrioleFont &f, const char *s) {
   float i0, i1, pen;
   return wx_ink(f, s, i0, i1, pen) ? i1 - i0 : 0;
 }
-static float wx_ink_x(const HaloFont &f, const char *s, int align, float x, float sc) {
+static float wx_ink_x(const OrioleFont &f, const char *s, int align, float x, float sc) {
   float ink0, ink1, pen;
   if (!wx_ink(f, s, ink0, ink1, pen)) return x;
   return align == 2 ? x + (pen - ink1) * sc : x + (pen / 2 - (ink0 + ink1) / 2) * sc;
 }
 
 // A line of text by the middle of its letters at y, aligned by align at x; it lies on `on` (black or the pill)
-static void wx_text(HaloItem &it, const HaloFont &f, const char *s, float mid, int align, float x, float y, float sc,
-                    uint32_t color, float alpha, const HaloItem *on) {
+static void wx_text(OrioleItem &it, const OrioleFont &f, const char *s, float mid, int align, float x, float y, float sc,
+                    uint32_t color, float alpha, const OrioleItem *on) {
   it.kind = HI_TEXT, it.font = &f, it.text = s, it.align = align, it.color = color, it.on = on, it.on_black = true;
   it.x = wx_ink_x(f, s, align, x, sc), it.y = y + (f.line / 2.0f - mid) * sc, it.scale = sc, it.alpha = alpha;
 }
 
-static void weather_layout(const HaloView &v) {
+static void weather_layout(const OrioleView &v) {
   // Clock along the top edge: the same baked arc as on the gallery, at rest
   wx_clock.kind = HI_MASK, wx_clock.mask = &tt_mask, wx_clock.color = 0xC6C6C6, wx_clock.on_black = true;
-  wx_clock.on = &halo_black, wx_clock.x = tt_x + tt_mask.w / 2.0f, wx_clock.y = tt_y + tt_mask.h / 2.0f;
-  wx_clock.scale = 1, wx_clock.alpha = tt_mask.bits ? 1 - halo_clamp01(ui_lock * 2) : 0;  // locked — gives way to the lock
-  halo_view_commit(wx_clock, v);
+  wx_clock.on = &oriole_black, wx_clock.x = tt_x + tt_mask.w / 2.0f, wx_clock.y = tt_y + tt_mask.h / 2.0f;
+  wx_clock.scale = 1, wx_clock.alpha = tt_mask.bits ? 1 - oriole_clamp01(ui_lock * 2) : 0;  // locked — gives way to the lock
+  oriole_view_commit(wx_clock, v);
   const float p = wx_pg.x;
   for (int i = 0; i < WX_PAGES; i++) {
     // The leaving page: scale 1 -> 0.55 toward the edge it leaves through, dims to 0.5 (as on "Pages")
-    const float off = i - p, f = halo_clamp01(fabsf(off)), s = 1 - 0.45f * f;
+    const float off = i - p, f = oriole_clamp01(fabsf(off)), s = 1 - 0.45f * f;
     const float k = fabsf(off) < 0.999f && i < wx_n ? 1 - 0.5f * f : 0;  // pages past the last city: hidden
     const float pivot = off < 0 ? 0 : W, cx = pivot + (CX + off * W - pivot) * s;
     auto X = [&](float x) { return cx + (x - CX) * s; };
@@ -233,54 +240,54 @@ static void weather_layout(const HaloView &v) {
     WxPage &w = wxp[i];
     const WxDay &d = wx_day(i);
     // City; the current weather icon, the temperature, today's high and low
-    wx_text(w.city, t_title, wx_city_name[i], wx_mid_city, 1, X(WX_CITY_X), Y(WX_CITY_Y), s, WX_WHITE, k, &halo_black);
+    wx_text(w.city, t_title, wx_city_name[i], wx_mid_city, 1, X(WX_CITY_X), Y(WX_CITY_Y), s, WX_WHITE, k, &oriole_black);
     // The row (WX_ROW_GAP above): the temperature's digits centered at CX by their cells, then everything around it by
     // what is really drawn
     int nd = 0;
     while (w.now[nd] >= '0' && w.now[nd] <= '9') nd++;
     // The lines in whole pixels, as the letters are drawn (a line's top lands on a whole row): the high/low and the
     // icon are put so that their first and last rows land exactly on them
-    const float now_line = halo_floor(WX_NOW_Y - w.t_now.mid + 0.5f);
+    const float now_line = oriole_floor(WX_NOW_Y - w.t_now.mid + 0.5f);
     const float anchor = CX - nd * w.t_now.cell / 2, top = now_line + wx_now_top, bottom = now_line + wx_now_bottom;
     float t0 = 0, t1 = 0, d0 = 0, d1 = 0;
-    halo_roll_ink(w.t_now, t0, t1);         // the digits and the degree sign
-    halo_roll_ink(w.t_now, d0, d1, 0, nd);  // the digits alone
+    oriole_roll_ink(w.t_now, t0, t1);         // the digits and the degree sign
+    oriole_roll_ink(w.t_now, d0, d1, 0, nd);  // the digits alone
     const float ink_l = anchor + d0, ink_r = anchor + t1, degree = t1 - d1;
-    const HaloImage &im = *WX_BIG[d.kind];
+    const OrioleImage &im = *WX_BIG[d.kind];
     float ix0, ix1, iy0, iy1;
     wx_image_ink(im, ix0, ix1, iy0, iy1);
     const float icon_x = ink_l - (WX_ROW_GAP + degree) * WX_ICON_NEAR - ix1 + im.w / 2.0f, icon_y = top - iy0 + im.h / 2.0f;
     const float hl_r = ink_r + WX_ROW_GAP + fmaxf(wx_ink_w(w_hl, w.hi), wx_ink_w(w_hl, w.lo));
     image_at(w.icon, im, X(icon_x), Y(icon_y), s, k);
-    const HaloView pv = {v.x + (cx - CX) * v.s, v.y, s * v.s, v.a, v.over};  // the page's place and size, in the view
-    halo_roll_layout(w.t_now, anchor, now_line + w.t_now.mid, WX_WHITE, k, &halo_black, pv);  // on a whole row
-    wx_text(w.t_hi, w_hl, w.hi, wx_mid_hl, 2, X(hl_r), Y(top - wx_hl_top + wx_mid_hl), s, WX_WHITE, k, &halo_black);
-    wx_text(w.t_lo, w_hl, w.lo, wx_mid_hl, 2, X(hl_r), Y(bottom - wx_hl_bottom + wx_mid_hl), s, WX_LO, k, &halo_black);
-    halo_view_commit(w.city, v), halo_view_commit(w.icon, v);
-    halo_view_commit(w.t_hi, v), halo_view_commit(w.t_lo, v);
+    const OrioleView pv = {v.x + (cx - CX) * v.s, v.y, s * v.s, v.a, v.over};  // the page's place and size, in the view
+    oriole_roll_layout(w.t_now, anchor, now_line + w.t_now.mid, WX_WHITE, k, &oriole_black, pv);  // on a whole row
+    wx_text(w.t_hi, w_hl, w.hi, wx_mid_hl, 2, X(hl_r), Y(top - wx_hl_top + wx_mid_hl), s, WX_WHITE, k, &oriole_black);
+    wx_text(w.t_lo, w_hl, w.lo, wx_mid_hl, 2, X(hl_r), Y(bottom - wx_hl_bottom + wx_mid_hl), s, WX_LO, k, &oriole_black);
+    oriole_view_commit(w.city, v), oriole_view_commit(w.icon, v);
+    oriole_view_commit(w.t_hi, v), oriole_view_commit(w.t_lo, v);
     // The pill with the next three hours: icon and time
-    HaloItem &pl = w.pill;
+    OrioleItem &pl = w.pill;
     pl.kind = HI_RRECT, pl.x = X(WX_PILL_X), pl.y = Y(WX_PILL_Y), pl.w = WX_PILL_W, pl.h = WX_PILL_H, pl.r = WX_PILL_H / 2;
     pl.scale = s, pl.color = WX_PILL, pl.alpha = k, pl.on_black = true;
-    halo_view_commit(pl, v);
+    oriole_view_commit(pl, v);
     for (int j = 0; j < WX_HOURS; j++) {
       image_at(w.hicon[j], *WX_SM[d.hour_kind[j]], X(wsc(WX_COL[j])), Y(WX_HICON_Y), s, k);
       wx_text(w.htime[j], w_hour, wx_hour[j], wx_mid_hour, 1, X(wsc(WX_COL[j])), Y(WX_HTIME_Y), s, WX_WHITE, k, &pl);
-      halo_view_commit(w.hicon[j], v), halo_view_commit(w.htime[j], v);
+      oriole_view_commit(w.hicon[j], v), oriole_view_commit(w.htime[j], v);
     }
   }
   // Page dots along the bottom arc (as on "Pages": 12 px every 20 px on r = 217, the current one — a worm). While the
   // swipe back is pulled from the bottom, the dots lift a little and the current one stretches up after the finger
-  const float P = halo_nav_pull(), lift = 26 * (1 - expf(-P / 140)), stretch = 30 * (1 - expf(-P / 120));
-  const float R = 217, step = 20 / R, a0 = HALO_PI + step * (wx_n - 1) / 2;
+  const float P = oriole_nav_pull(), lift = 26 * (1 - expf(-P / 140)), stretch = 30 * (1 - expf(-P / 120));
+  const float R = 217, step = 20 / R, a0 = ORIOLE_PI + step * (wx_n - 1) / 2;
   for (int i = 0; i < WX_PAGES; i++) {  // one city: no dots at all
     const float a = a0 - i * step;
-    HaloItem &d = wx_dot[i];
+    OrioleItem &d = wx_dot[i];
     d.kind = HI_CIRCLE, d.x = CX + R * sinf(a), d.y = CX - R * cosf(a) - lift, d.r = 6, d.scale = 1, d.color = 0xFFFFFF;
     d.alpha = i < wx_n && wx_n > 1 ? 0.3f : 0, d.on_black = true;
-    halo_view_commit(d, v);
+    oriole_view_commit(d, v);
   }
-  const float pc = wx_n > 1 ? halo_clamp01(p / (wx_n - 1)) * (wx_n - 1) : 0;
+  const float pc = wx_n > 1 ? oriole_clamp01(p / (wx_n - 1)) * (wx_n - 1) : 0;
   const int i0 = (int)pc;
   const float fr = pc - i0, head = fminf(1, fr * 2), tail = fmaxf(0, fr * 2 - 1);
   const float aa = a0 - (i0 + tail) * step, ab = a0 - (i0 + head) * step;
@@ -288,28 +295,28 @@ static void weather_layout(const HaloView &v) {
   wx_worm.kind = HI_ARC, wx_worm.x = CX, wx_worm.y = CX - lift, wx_worm.r = R, wx_worm.w = 12, wx_worm.scale = 1;
   wx_worm.a0 = fminf(aa, ab), wx_worm.a1 = fmaxf(aa, ab) + 0.0001f, wx_worm.color = 0xFFFFFF;
   wx_worm.alpha = pulled || wx_n < 2 ? 0 : 1, wx_worm.on_black = true;
-  halo_view_commit(wx_worm, v);
+  oriole_view_commit(wx_worm, v);
   // Pulled: the current dot becomes a capsule growing upward from its place
   const float ac = a0 - lroundf(pc) * step, dx = CX + R * sinf(ac), dy = CX - R * cosf(ac) - lift;
   wx_pull.kind = HI_RRECT, wx_pull.x = dx, wx_pull.y = dy - stretch / 2, wx_pull.w = 12, wx_pull.h = 12 + stretch;
   wx_pull.r = 6, wx_pull.scale = 1, wx_pull.color = 0xFFFFFF, wx_pull.alpha = pulled && wx_n > 1 ? 1 : 0;
   wx_pull.on_black = true;
-  halo_view_commit(wx_pull, v);
+  oriole_view_commit(wx_pull, v);
 }
 
 static void weather_draw() {
-  halo_item_draw(wx_clock);
+  oriole_item_draw(wx_clock);
   for (auto &w : wxp) {
-    halo_item_draw(w.city), halo_item_draw(w.icon), halo_roll_draw(w.t_now);
-    halo_item_draw(w.t_hi), halo_item_draw(w.t_lo), halo_item_draw(w.pill);
-    for (int j = 0; j < WX_HOURS; j++) halo_item_draw(w.hicon[j]), halo_item_draw(w.htime[j]);
+    oriole_item_draw(w.city), oriole_item_draw(w.icon), oriole_roll_draw(w.t_now);
+    oriole_item_draw(w.t_hi), oriole_item_draw(w.t_lo), oriole_item_draw(w.pill);
+    for (int j = 0; j < WX_HOURS; j++) oriole_item_draw(w.hicon[j]), oriole_item_draw(w.htime[j]);
   }
-  for (auto &d : wx_dot) halo_item_draw(d);
-  halo_item_draw(wx_worm), halo_item_draw(wx_pull);
+  for (auto &d : wx_dot) oriole_item_draw(d);
+  oriole_item_draw(wx_worm), oriole_item_draw(wx_pull);
 }
 
 // In the gallery: to the face — swipe up from the bottom edge, as back over the face
-static const HaloScreen WEATHER = {weather_enter, weather_update, weather_layout, weather_draw, false, HALO_HOME_UP};
+static const OrioleScreen WEATHER = {weather_enter, weather_update, weather_layout, weather_draw, false, ORIOLE_HOME_UP};
 
 // ---------- Open-Meteo: geocoding (once per city name) and the forecast ----------
 // https://open-meteo.com — free, no key. The forecast: the current temperature and weather code, today's high and
@@ -412,7 +419,8 @@ static bool wx_forecast(const WxCity &c, WxDay &d, bool first, char *buf, int ca
   char url[400];
   snprintf(url, sizeof(url),
            "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,weather_code"
-           "&hourly=weather_code&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&forecast_hours=3"
+           "&hourly=weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code,sunrise,sunset"
+           "&forecast_days=7&forecast_hours=3"
            "&timezone=auto&temperature_unit=%s",
            c.lat, c.lon, cfg.fahrenheit ? "fahrenheit" : "celsius");
   if (net_get(url, buf, cap_) < 0) return false;
@@ -427,6 +435,29 @@ static bool wx_forecast(const WxCity &c, WxDay &d, bool first, char *buf, int ca
     d.hour_kind[i] = d.kind;
     if (hc && (*hc == '[' || *hc == ',')) d.hour_kind[i] = wx_kind(strtol(hc + 1, &hc, 10));
   }
+  // The week: daily arrays of up to 7; sunrise/sunset today as "2026-11-27T07:38"
+  auto nums = [&](const char *key, float *out) {
+    int n = 0;
+    char *p = daily ? js_find(daily, key) : nullptr;
+    if (p && *p == '[')
+      for (p++; n < 7 && *p && *p != ']';) {
+        out[n++] = strtof(p, &p);
+        while (*p == ',' || *p == ' ') p++;
+      }
+    return n;
+  };
+  float mx[7], mn[7], wc[7];
+  const int nd = min(nums("temperature_2m_max", mx), min(nums("temperature_2m_min", mn), nums("weather_code", wc)));
+  d.days = nd;
+  for (int i = 0; i < nd; i++)
+    d.wk_hi[i] = constrain(lroundf(mx[i]), -99, 127), d.wk_lo[i] = constrain(lroundf(mn[i]), -99, 127),
+    d.wk_kind[i] = wx_kind((int)wc[i]);
+  auto hm = [&](const char *key) -> int16_t {  // the first time in the array: minutes after midnight
+    char *p = daily ? js_find(daily, key) : nullptr;
+    p = p ? strchr(p, 'T') : nullptr;
+    return p ? (int16_t)(atoi(p + 1) * 60 + atoi(p + 4)) : -1;
+  };
+  d.rise = hm("sunrise"), d.set = hm("sunset");
   const float off = wx_first_num(buf, "utc_offset_seconds");
   d.off_ok = !isnan(off), d.utc_off = d.off_ok ? (int32_t)off : 0;
   if (first && d.off_ok) net_set_auto_offset(d.utc_off);
@@ -485,6 +516,7 @@ static void wx_task(void *) {
     if (due || wx_cmd_update) {
       wx_cmd_update = false, last_try = now;
       wx_update();
+      cal_update();  // calendar.h: the calendar with it (Wi-Fi is up anyway)
     }
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10000));
   }
@@ -506,7 +538,7 @@ static bool wx_apply() {
 
 static void weather_net_begin() {
   xTaskCreatePinnedToCoreWithCaps(wx_task, "weather", 8192, nullptr, 2, &wx_task_h, 0, MALLOC_CAP_SPIRAM);  // as ai_task
-  halo_command("weather", [](const char *) {
+  oriole_command("weather", [](const char *) {
     wx_cmd_update = true;
     xTaskNotifyGive(wx_task_h);
     Serial.println("OK weather");

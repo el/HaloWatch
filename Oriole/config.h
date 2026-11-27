@@ -27,9 +27,11 @@ struct Cfg {
   int face_style, face_color;
   bool bt_on;
   int night;
+  char cal_url[300];                     // calendar.h
+  char ha_url[96], ha_token[256], ha_items[300];  // home.h
   int wx_every, net_idle;
 };
-static Cfg cfg;
+static Cfg &cfg = psram_new<Cfg>();  // in PSRAM: internal RAM is for Wi-Fi and Bluetooth
 static Preferences cfg_prefs;
 static SemaphoreHandle_t cfg_mx;
 static volatile uint32_t cfg_ver;  // bumped on every change: modules re-read what they use
@@ -84,7 +86,11 @@ static const CfgField CFG_FIELDS[] = {
     {"face_style", CF_INT, &cfg.face_style, 0, 5, false, "0"},  // face.h: FACE_STYLE
     {"face_color", CF_INT, &cfg.face_color, 0, 4, false, "0"},  // face.h: FACE_COLOR
     {"bt_on", CF_BOOL, &cfg.bt_on, 0, 0, false, "1"},            // ancs.h: iPhone notifications
-    {"night", CF_INT, &cfg.night, 0, 3, false, "0"},             // face.h: night mode (0 off, 1 22-7, 2 23-6, 3 always)
+    {"night", CF_INT, &cfg.night, 0, 3, false, "0"},
+    {"cal_url", CF_STR, cfg.cal_url, sizeof(cfg.cal_url), 0, true, ""},     // calendar.h: a private iCal link
+    {"ha_url", CF_STR, cfg.ha_url, sizeof(cfg.ha_url), 0, false, ""},       // home.h: Home Assistant
+    {"ha_token", CF_STR, cfg.ha_token, sizeof(cfg.ha_token), 0, true, ""},
+    {"ha_items", CF_STR, cfg.ha_items, sizeof(cfg.ha_items), 0, false, ""},             // face.h: night mode (0 off, 1 22-7, 2 23-6, 3 always)
     {"net_idle", CF_INT, &cfg.net_idle, 10, 3600, false, "60"},
 };
 #define CFG_N (int)(sizeof(CFG_FIELDS) / sizeof(CFG_FIELDS[0]))
@@ -205,12 +211,13 @@ static void cfg_save(const CfgField &f) {  // into flash, then the app reacts; f
 }
 
 static void cmd_set(const char *args) {
-  static char name[24], val[1300];
+  static char name[24];
+  static char *val = (char *)heap_caps_malloc(1300, MALLOC_CAP_SPIRAM);  // a prompt can be long
   const char *sp = strchr(args, ' ');
   const size_t nl = sp ? (size_t)(sp - args) : strlen(args);
   if (!nl || nl >= sizeof(name)) return (void)Serial.println("ERR ? usage: set KEY VALUE");
   memcpy(name, args, nl), name[nl] = 0;
-  strlcpy(val, sp ? sp + 1 : "", sizeof(val));
+  strlcpy(val, sp ? sp + 1 : "", 1300);
   cfg_unescape(val);
   const CfgField *f = nullptr;
   for (const CfgField &c : CFG_FIELDS)
@@ -266,13 +273,13 @@ static void cfg_ui_poll(bool now = false) {  // from loop(); now — at once (be
 }
 
 static void config_commands() {
-  halo_command("cfg", [](const char *) {
+  oriole_command("cfg", [](const char *) {
     JBuf j;
     cfg_json(j);
     j.line("CFG");
   });
-  halo_command("set", cmd_set);
-  halo_command("reboot", [](const char *) {
+  oriole_command("set", cmd_set);
+  oriole_command("reboot", [](const char *) {
     Serial.println("OK reboot");
     Serial.flush();
     delay(100);

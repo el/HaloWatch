@@ -1,4 +1,4 @@
-// Движок кадров Halo: по сигналу TE рисует и отправляет только пачки строк с изменениями.
+// Движок кадров Oriole: по сигналу TE рисует и отправляет только пачки строк с изменениями.
 //
 //   задача кадров (ядро 1)                         помощник (ядро 0)
 //     ждёт TE
@@ -30,51 +30,51 @@
 //     один проход, новый ждёт следующего TE (проход тот же, что был бы вслед, — ничего не теряется).
 // Замер Oriole (лента, бросок): было 10 смен способа на 80 кадров — 6 кадров дважды, 6 ни разу, шаг движения
 // гулял до 14 мс (tools/trace.py: «кадры на экране»).
-#include "halo_internal.h"
+#include "oriole_internal.h"
 
 #pragma GCC optimize("O3", "fast-math")
 
-__thread HaloBand hb;
+__thread OrioleBand hb;
 uint32_t hf_finger_t;
 
-static HaloConfig cfg;
-static HaloUpdate m_update;
-static HaloDraw m_draw;
+static OrioleConfig cfg;
+static OrioleUpdate m_update;
+static OrioleDraw m_draw;
 
 // ---------- Что изменилось: по пачке — отрезок столбцов ----------
-static int16_t dmg_x0[HALO_BANDS], dmg_x1[HALO_BANDS];  // x1 < x0 — пачка чистая
+static int16_t dmg_x0[ORIOLE_BANDS], dmg_x1[ORIOLE_BANDS];  // x1 < x0 — пачка чистая
 static portMUX_TYPE dmg_mux = portMUX_INITIALIZER_UNLOCKED;
-static int16_t chord_x0[HALO_BANDS], chord_x1[HALO_BANDS];  // круг экрана в пачке (чётный — нечётный)
+static int16_t chord_x0[ORIOLE_BANDS], chord_x1[ORIOLE_BANDS];  // круг экрана в пачке (чётный — нечётный)
 
 static void chords() {
-  const float c = (HALO_W - 1) / 2.0f, R = HALO_W / 2.0f;
-  for (int b = 0; b < HALO_BANDS; b++) {
-    const int y = b * HALO_ROWS, rows = min(HALO_ROWS, HALO_H - y);
+  const float c = (ORIOLE_W - 1) / 2.0f, R = ORIOLE_W / 2.0f;
+  for (int b = 0; b < ORIOLE_BANDS; b++) {
+    const int y = b * ORIOLE_ROWS, rows = min(ORIOLE_ROWS, ORIOLE_H - y);
     const float dy = (y <= c && y + rows >= c) ? 0 : fminf(fabsf(y - c), fabsf(y + rows - c));
-    const float half = halo_sqrt(fmaxf(0, R * R - dy * dy)) + 2;
+    const float half = oriole_sqrt(fmaxf(0, R * R - dy * dy)) + 2;
     chord_x0[b] = max(0, (int)(c - half)) & ~1;
-    chord_x1[b] = min(HALO_W - 1, (int)(c + half)) | 1;
-    dmg_x0[b] = HALO_W, dmg_x1[b] = -1;
+    chord_x1[b] = min(ORIOLE_W - 1, (int)(c + half)) | 1;
+    dmg_x0[b] = ORIOLE_W, dmg_x1[b] = -1;
   }
 }
 
-void halo_damage(int x0, int y0, int x1, int y1) {
-  x0 = max(x0, 0), y0 = max(y0, 0), x1 = min(x1, HALO_W - 1), y1 = min(y1, HALO_H - 1);
+void oriole_damage(int x0, int y0, int x1, int y1) {
+  x0 = max(x0, 0), y0 = max(y0, 0), x1 = min(x1, ORIOLE_W - 1), y1 = min(y1, ORIOLE_H - 1);
   if (x0 > x1 || y0 > y1) return;
   portENTER_CRITICAL(&dmg_mux);
-  for (int b = y0 / HALO_ROWS; b <= y1 / HALO_ROWS; b++) {
+  for (int b = y0 / ORIOLE_ROWS; b <= y1 / ORIOLE_ROWS; b++) {
     if (x0 < dmg_x0[b]) dmg_x0[b] = x0;
     if (x1 > dmg_x1[b]) dmg_x1[b] = x1;
   }
   portEXIT_CRITICAL(&dmg_mux);
 }
 
-void halo_damage_f(float x0, float y0, float x1, float y1) {
-  halo_damage(halo_floor(x0) - 1, halo_floor(y0) - 1, halo_floor(x1) + 2, halo_floor(y1) + 2);
+void oriole_damage_f(float x0, float y0, float x1, float y1) {
+  oriole_damage(oriole_floor(x0) - 1, oriole_floor(y0) - 1, oriole_floor(x1) + 2, oriole_floor(y1) + 2);
 }
 
-void halo_damage_all() {
-  halo_damage(0, 0, HALO_W - 1, HALO_H - 1);
+void oriole_damage_all() {
+  oriole_damage(0, 0, ORIOLE_W - 1, ORIOLE_H - 1);
 }
 
 // ---------- Время анимаций ----------
@@ -83,10 +83,10 @@ static volatile bool vt_paused, vt_fixed;
 static volatile int vt_steps;
 static volatile float slowmo = 1;
 
-uint32_t halo_us() {
+uint32_t oriole_us() {
   return (uint32_t)m_clock;
 }
-uint32_t halo_ms() {
+uint32_t oriole_ms() {
   return (uint32_t)(m_clock / 1000);
 }
 
@@ -150,14 +150,14 @@ static void cmd_rec(const char *a) {
     uint32_t sum = 0;
     for (int p = 0; p < 2; p++)
       for (uint32_t i = 0; i < rec_len[p]; i++) sum += rec_pool[p][i];
-    halo_serial_binary(true);
+    oriole_serial_binary(true);
     // 6-е поле 1: кадры — изменения поверх прошлого (record.py собирает их по очереди)
     Serial.printf("REC %lu %lu %d %u %d 1\n", (unsigned long)rec_len[0], (unsigned long)rec_len[1], rec_half ? 2 : 1,
-                  (unsigned)rec_no, HALO_W);
+                  (unsigned)rec_no, ORIOLE_W);
     for (int p = 0; p < 2; p++)
       for (uint32_t off = 0; off < rec_len[p];) off += Serial.write(rec_pool[p] + off, min<uint32_t>(rec_len[p] - off, 4096));
     Serial.printf("\nREC END %lu\n", (unsigned long)sum);
-    halo_serial_binary(false);
+    oriole_serial_binary(false);
     return;
   }
   if (!strncmp(a, "free", 4)) {
@@ -196,7 +196,7 @@ static void cmd_rec(const char *a) {
   rec_half = strcmp(mode, "full") != 0;
   rec_first = true;
   rec_left = n;
-  halo_damage_all();  // первый кадр записи — целиком, дальше — изменения
+  oriole_damage_all();  // первый кадр записи — целиком, дальше — изменения
   LOG("rec: %d frames, %s, %lu KB\n", n, rec_half ? "half" : "full", (unsigned long)(rec_cap * 2 / 1024));
 }
 
@@ -221,7 +221,7 @@ static void helper_task(void *) {
     m_draw();
     if (rec_cur) rec_band(0);
     job_us = trace_now() - t0;
-    trace_span(TR_BAND, t0, job_y / HALO_ROWS, t0 + job_us);
+    trace_span(TR_BAND, t0, job_y / ORIOLE_ROWS, t0 + job_us);
     xSemaphoreGive(half_done);
   }
 }
@@ -233,16 +233,16 @@ static volatile bool shot_req, shot_ready, bench_ring_req;
 static void render_full(uint16_t *dst, bool swap) {  // dst — 466×466 в PSRAM
   // Пачка — во внутренней памяти, как у настоящего кадра: иначе замер bench врёт (запись в PSRAM медленная)
   static uint16_t *tmp;  // in PSRAM: kept for good, and internal RAM is for Wi-Fi and Bluetooth (bench reads slower)
-  if (!tmp) tmp = (uint16_t *)heap_caps_malloc(HALO_ROWS * HALO_W * 2, MALLOC_CAP_SPIRAM);
-  if (!tmp) tmp = (uint16_t *)heap_caps_malloc(HALO_ROWS * HALO_W * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!tmp) tmp = (uint16_t *)heap_caps_malloc(ORIOLE_ROWS * ORIOLE_W * 2, MALLOC_CAP_SPIRAM);
+  if (!tmp) tmp = (uint16_t *)heap_caps_malloc(ORIOLE_ROWS * ORIOLE_W * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (!tmp) return;
-  const HaloBand saved = hb;
-  for (int y = 0; y < HALO_H; y += HALO_ROWS) {
-    hb = {tmp, y, min(HALO_ROWS, HALO_H - y), 0, HALO_W - 1, 0, HALO_W};
+  const OrioleBand saved = hb;
+  for (int y = 0; y < ORIOLE_H; y += ORIOLE_ROWS) {
+    hb = {tmp, y, min(ORIOLE_ROWS, ORIOLE_H - y), 0, ORIOLE_W - 1, 0, ORIOLE_W};
     clear_part();
     m_draw();
     if (!dst) continue;
-    for (int i = 0; i < hb.rows * HALO_W; i++) dst[y * HALO_W + i] = swap ? __builtin_bswap16(tmp[i]) : tmp[i];
+    for (int i = 0; i < hb.rows * ORIOLE_W; i++) dst[y * ORIOLE_W + i] = swap ? __builtin_bswap16(tmp[i]) : tmp[i];
   }
   hb = saved;
 }
@@ -256,14 +256,14 @@ static uint32_t hp_report[2][HP_PARTS];
 static volatile bool report_ready;
 static volatile int bright_req = -1, power_req = -1;
 static volatile bool disp_on = true, boot_cmd;
-static int16_t split[HALO_BANDS];
+static int16_t split[ORIOLE_BANDS];
 // Когда граница пачки делилась в последний раз (номер кадра): старая граница — от другой картинки (экран стоял, потом
 // сменился целиком: первый кадр перехода Settings — правое ядро 18 мс, левое 6), начинать с середины
-static uint32_t split_seq[HALO_BANDS], frame_seq;
+static uint32_t split_seq[ORIOLE_BANDS], frame_seq;
 // Сколько рисовалась каждая пачка в прошлых кадрах, мкс: середина с кольцами и цифрами в разы дороже краёв — по
 // среднему выбор ошибался. Только рисование: ожидание буфера (очередь на шине) оценка считает сама — вслед за
 // проходом его нет, и по такой цене кадр «впереди» казался легче, чем есть
-static float band_cost[HALO_BANDS];
+static float band_cost[ORIOLE_BANDS];
 static float us_per_px;  // передача пикселя по шине: QSPI — 4 бита за такт, 2 байта на пиксель
 
 // Успеет ли кадр впереди прохода: каждая пачка должна уйти на шину раньше, чем до неё дойдёт проход. Пачка ждёт
@@ -273,15 +273,15 @@ static bool fits_ahead(const int16_t *fx0, const int16_t *fx1, float start, floa
   const int nb = hd_buffers();
   float draw = start + 100, bus = draw, ends[4] = {};  // ends — когда освободится буфер каждой из последних пачек
   int n = 0;
-  for (int b = 0; b < HALO_BANDS; b++) {
+  for (int b = 0; b < ORIOLE_BANDS; b++) {
     if (fx0[b] > fx1[b]) continue;
     const int x0 = max(fx0[b] & ~1, (int)chord_x0[b]), x1 = min(fx1[b] | 1, (int)chord_x1[b]);
     if (x0 > x1) continue;
     if (n >= nb) draw = fmaxf(draw, ends[n % nb]);
     draw += band_cost[b] * k + 20;
     const float go = fmaxf(draw, bus);
-    if (go + 250 > blank + b * HALO_ROWS * row_us) return false;
-    bus = go + (x1 - x0 + 1) * min(HALO_ROWS, HALO_H - b * HALO_ROWS) * us_per_px + 10;
+    if (go + 250 > blank + b * ORIOLE_ROWS * row_us) return false;
+    bus = go + (x1 - x0 + 1) * min(ORIOLE_ROWS, ORIOLE_H - b * ORIOLE_ROWS) * us_per_px + 10;
     ends[n++ % nb] = bus;
   }
   return true;
@@ -301,8 +301,8 @@ static void frame_task(void *) {
   for (auto &c : band_cost) c = 300;
   us_per_px = 4e6f / cfg.bus_hz;
   chords();
-  halo_damage_all();
-  halo_subpixel = false;
+  oriole_damage_all();
+  oriole_subpixel = false;
   m_update(1.0f / 60);
   uint32_t report_at = millis() + cfg.report_ms;
   bool frame_new = true;
@@ -322,24 +322,24 @@ static void frame_task(void *) {
     if (bright_req >= 0) hd_set_brightness(bright_req), bright_req = -1;
     if (power_req >= 0) hd_set_power(power_req), power_req = -1;
 
-    int16_t fx0[HALO_BANDS], fx1[HALO_BANDS];
+    int16_t fx0[ORIOLE_BANDS], fx1[ORIOLE_BANDS];
     portENTER_CRITICAL(&dmg_mux);
     memcpy(fx0, dmg_x0, sizeof(fx0));
     memcpy(fx1, dmg_x1, sizeof(fx1));
-    for (int b = 0; b < HALO_BANDS; b++) dmg_x0[b] = HALO_W, dmg_x1[b] = -1;
+    for (int b = 0; b < ORIOLE_BANDS; b++) dmg_x0[b] = ORIOLE_W, dmg_x1[b] = -1;
     portEXIT_CRITICAL(&dmg_mux);
 
     const uint32_t t0 = trace_now();
     int bands = 0, px = 0;
     // Впереди прохода или вслед за ним: как решено в плане, но если кадр впереди не успеет — вслед (иначе разрыв)
     const uint32_t te_t = hd_te_rise(), blank = hd_te_blank(), period = hd_te_period() ? hd_te_period() : 16650;
-    const float row_us = (float)(period - blank) / HALO_H;
+    const float row_us = (float)(period - blank) / ORIOLE_H;
     const uint32_t scan = te_t + blank;  // начало прохода после этого TE
     const bool chase = plan_chase || !fits_ahead(fx0, fx1, t0 - te_t, blank, row_us, 1.15f);
     const bool light = chase && fits_ahead(fx0, fx1, 0, blank, row_us, 1.5f);  // успел бы впереди с запасом
     rec_cur = rec_left > 0 && (frame_new || rec_first) && !rec_over && rec_len[1] + 64 < rec_cap;
     frame_seq++;
-    for (int b = 0; b < HALO_BANDS; b++) {
+    for (int b = 0; b < ORIOLE_BANDS; b++) {
       if (fx0[b] > fx1[b]) continue;
       const int x0 = max(fx0[b] & ~1, (int)chord_x0[b]), x1 = min(fx1[b] | 1, (int)chord_x1[b]);
       if (x0 > x1) continue;
@@ -348,7 +348,7 @@ static void frame_task(void *) {
         rec_put(1, 'F', v, 3, 0);
         rec_first = false;
       }
-      const int y = b * HALO_ROWS, rows = min(HALO_ROWS, HALO_H - y), w = x1 - x0 + 1;
+      const int y = b * ORIOLE_ROWS, rows = min(ORIOLE_ROWS, ORIOLE_H - y), w = x1 - x0 + 1;
       uint16_t *buf = hd_buffer();
       const uint32_t c0 = trace_now();
       if (cfg.two_cores && w >= 160) {  // широкая пачка — пополам; граница — туда, где работы меньше
@@ -413,7 +413,7 @@ static void frame_task(void *) {
       }
     }
     rec_cur = false;
-    hp_frame_end();  // скетч попросил уснуть (halo_sleep) — здесь: кадр уже на экране, шина свободна
+    hp_frame_end();  // скетч попросил уснуть (oriole_sleep) — здесь: кадр уже на экране, шина свободна
 
     // План следующего кадра: начать с ближайшего TE (уже пришёл — сразу), способ — как сейчас. Два кадра в один проход
     // не ставим: после «вслед» кадр «впереди» ждёт ещё один TE
@@ -440,7 +440,7 @@ static void frame_task(void *) {
     if (frame_new) {
       m_clock += (uint32_t)(dt * 1e6f + 0.5f);
       frame_clock = (uint32_t)m_clock;
-      halo_subpixel = false;  // каждый кадр заново: кому нужно — ставит в update
+      oriole_subpixel = false;  // каждый кадр заново: кому нужно — ставит в update
       m_update(vt_paused || vt_fixed ? dt : dt * slowmo);
       const uint32_t u = trace_now() - p0;
       trace_span(TR_PREPARE, p0, 0, p0 + u);
@@ -461,25 +461,25 @@ static void frame_task(void *) {
       stats = {};
       memset(hp_cyc, 0, sizeof(hp_cyc));
     }
-    halo_trace_pump();
+    oriole_trace_pump();
   }
 }
 
 // ---------- Команды ----------
 static void cmd_shot(const char *) {
-  if (!shot_buf) shot_buf = (uint16_t *)heap_caps_malloc(HALO_W * HALO_H * 2, MALLOC_CAP_SPIRAM);
+  if (!shot_buf) shot_buf = (uint16_t *)heap_caps_malloc(ORIOLE_W * ORIOLE_H * 2, MALLOC_CAP_SPIRAM);
   if (!shot_buf) return;
   shot_ready = false, shot_req = true;
   const uint32_t t0 = millis();
   while (!shot_ready && millis() - t0 < 1000) delay(2);
-  if (shot_ready) hc_send_image(shot_buf, HALO_W, HALO_H);
+  if (shot_ready) hc_send_image(shot_buf, ORIOLE_W, ORIOLE_H);
 }
 
 // bench ring — одно кольцо (r 100, толщина 20) во внутреннюю пачку в разных вариантах: тактов на пиксель кольца
 static void bench_ring() {
-  static uint16_t *tmp = (uint16_t *)heap_caps_malloc(HALO_ROWS * HALO_W * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  const HaloBand saved = hb;
-  const float area = 2 * HALO_PI * 100 * 20;
+  static uint16_t *tmp = (uint16_t *)heap_caps_malloc(ORIOLE_ROWS * ORIOLE_W * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  const OrioleBand saved = hb;
+  const float area = 2 * ORIOLE_PI * 100 * 20;
   struct V {
     const char *name;
     float frac;
@@ -487,10 +487,10 @@ static void bench_ring() {
   } vs[] = {{"full", 1, 0}, {"arc 0.7", 0.7f, 0}, {"arc 0.7 + track", 0.7f, 0x303030}, {"arc 0.3 + track", 0.3f, 0x303030}};
   for (auto &v : vs) {
     uint32_t cyc = 0;
-    for (int y = 0; y < HALO_H; y += HALO_ROWS) {
-      hb = {tmp, y, min(HALO_ROWS, HALO_H - y), 0, HALO_W - 1, 0, HALO_W};
+    for (int y = 0; y < ORIOLE_H; y += ORIOLE_ROWS) {
+      hb = {tmp, y, min(ORIOLE_ROWS, ORIOLE_H - y), 0, ORIOLE_W - 1, 0, ORIOLE_W};
       const uint32_t c0 = esp_cpu_get_cycle_count();
-      halo_ring(233, 233, 100, 20, v.frac, 0xFF3060, v.track);
+      oriole_ring(233, 233, 100, 20, v.frac, 0xFF3060, v.track);
       cyc += esp_cpu_get_cycle_count() - c0;
     }
     LOG("bench ring %s: %.2f ms, %.0f cycles/px\n", v.name, cyc / 240000.0f, cyc / area);
@@ -502,10 +502,10 @@ static void bench_ring() {
             {"row 300x62 r31 alpha 0.5", 83, 200, 383, 262, 31, 0.5f}};
   for (auto &v : rs) {
     uint32_t cyc = 0;
-    for (int y = 0; y < HALO_H; y += HALO_ROWS) {
-      hb = {tmp, y, min(HALO_ROWS, HALO_H - y), 0, HALO_W - 1, 0, HALO_W};
+    for (int y = 0; y < ORIOLE_H; y += ORIOLE_ROWS) {
+      hb = {tmp, y, min(ORIOLE_ROWS, ORIOLE_H - y), 0, ORIOLE_W - 1, 0, ORIOLE_W};
       const uint32_t c0 = esp_cpu_get_cycle_count();
-      halo_rrect(v.x0, v.y0, v.x1, v.y1, v.r, 0x202024, v.a);
+      oriole_rrect(v.x0, v.y0, v.x1, v.y1, v.r, 0x202024, v.a);
       cyc += esp_cpu_get_cycle_count() - c0;
     }
     const float area = (v.x1 - v.x0) * (fminf(v.y1, 466) - fmaxf(v.y0, 0));
@@ -529,27 +529,27 @@ static void cmd_bench(const char *a) {  // весь кадр одним ядро
   vt_paused = false;
 }
 
-void halo_brightness(uint8_t level) {
+void oriole_brightness(uint8_t level) {
   bright_req = level;
 }
 
-void halo_display_on(bool on) {
+void oriole_display_on(bool on) {
   disp_on = on, power_req = on;
 }
 
-bool halo_display_is_on() {
+bool oriole_display_is_on() {
   return disp_on;
 }
 
 // Кнопка BOOT — GPIO0 (нажата — 0): нажатие засчитывается, когда она нажата два кадра подряд после двух отпущенных
 // (дребезг контактов — короче кадра). Команда boot — то же нажатие из порта
-static bool boot_swallow;  // BOOT разбудила плату (halo_power.cpp): это нажатие уже «засчитано»
+static bool boot_swallow;  // BOOT разбудила плату (oriole_power.cpp): это нажатие уже «засчитано»
 
 void hf_swallow_boot() {
   boot_swallow = true;
 }
 
-bool halo_boot_click() {
+bool oriole_boot_click() {
   static uint8_t hist = 0xFF;
   static bool down;
   hist = hist << 1 | (gpio_get_level(GPIO_NUM_0) ? 1 : 0);
@@ -560,7 +560,7 @@ bool halo_boot_click() {
   return false;
 }
 
-bool halo_begin(HaloUpdate update, HaloDraw draw, const HaloConfig &c) {
+bool oriole_begin(OrioleUpdate update, OrioleDraw draw, const OrioleConfig &c) {
   cfg = c;
   m_update = update;
   m_draw = draw;
@@ -575,34 +575,34 @@ bool halo_begin(HaloUpdate update, HaloDraw draw, const HaloConfig &c) {
   hu_begin();
   half_go = xSemaphoreCreateBinary();
   half_done = xSemaphoreCreateBinary();
-  halo_trace_name(TR_FRAME, "frame", 'X');
-  halo_trace_name(TR_PREPARE, "prepare", 'X');
-  halo_trace_name(TR_BAND, "band", 'X');
-  halo_trace_name(TR_WAIT_HALF, "wait right half", 'X');
-  halo_trace_name(TR_FINISH, "last band out", 'X');
-  halo_trace_name(TR_REC, "rec", 'X');
-  halo_trace_name(TR_STEP, "step", 'i');
-  halo_trace_name(TR_CLOCK, "clock", 'i');  // перед update: через сколько мкс экран покажет кадр; 1 — вслед за проходом
-  halo_command("shot", cmd_shot);
-  halo_command("bench", cmd_bench);
-  halo_command("rec", cmd_rec);
-  halo_command("pause", [](const char *) { vt_steps = 0, vt_paused = true; });
-  halo_command("resume", [](const char *) { vt_steps = 0, vt_paused = false; });
-  halo_command("step", [](const char *a) { vt_steps += max(1, atoi(a)), vt_paused = true; });
-  halo_command("clock", [](const char *a) { vt_fixed = !strcmp(a, "fixed"); });
-  halo_command("slow", [](const char *a) { slowmo = 1 / constrain(atof(a), 1.0f, 100.0f); });
-  halo_command("bright", [](const char *a) { halo_brightness(atoi(a)); });
-  halo_command("boot", [](const char *) { boot_cmd = true; });
-  halo_command("redraw", [](const char *) { halo_damage_all(); });
-  halo_command("prof", [](const char *) { hp_on = !hp_on; });
-  if (cfg.two_cores) xTaskCreatePinnedToCore(helper_task, "halo_helper", 4096, nullptr, 10, nullptr, 0);
-  xTaskCreatePinnedToCore(frame_task, "halo_frames", 6144, nullptr, 5, nullptr, 1);
-  LOG("halo: started, free internal %u KB, psram %u KB\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024,
+  oriole_trace_name(TR_FRAME, "frame", 'X');
+  oriole_trace_name(TR_PREPARE, "prepare", 'X');
+  oriole_trace_name(TR_BAND, "band", 'X');
+  oriole_trace_name(TR_WAIT_HALF, "wait right half", 'X');
+  oriole_trace_name(TR_FINISH, "last band out", 'X');
+  oriole_trace_name(TR_REC, "rec", 'X');
+  oriole_trace_name(TR_STEP, "step", 'i');
+  oriole_trace_name(TR_CLOCK, "clock", 'i');  // перед update: через сколько мкс экран покажет кадр; 1 — вслед за проходом
+  oriole_command("shot", cmd_shot);
+  oriole_command("bench", cmd_bench);
+  oriole_command("rec", cmd_rec);
+  oriole_command("pause", [](const char *) { vt_steps = 0, vt_paused = true; });
+  oriole_command("resume", [](const char *) { vt_steps = 0, vt_paused = false; });
+  oriole_command("step", [](const char *a) { vt_steps += max(1, atoi(a)), vt_paused = true; });
+  oriole_command("clock", [](const char *a) { vt_fixed = !strcmp(a, "fixed"); });
+  oriole_command("slow", [](const char *a) { slowmo = 1 / constrain(atof(a), 1.0f, 100.0f); });
+  oriole_command("bright", [](const char *a) { oriole_brightness(atoi(a)); });
+  oriole_command("boot", [](const char *) { boot_cmd = true; });
+  oriole_command("redraw", [](const char *) { oriole_damage_all(); });
+  oriole_command("prof", [](const char *) { hp_on = !hp_on; });
+  if (cfg.two_cores) xTaskCreatePinnedToCore(helper_task, "oriole_helper", 4096, nullptr, 10, nullptr, 0);
+  xTaskCreatePinnedToCore(frame_task, "oriole_frames", 6144, nullptr, 5, nullptr, 1);
+  LOG("oriole: started, free internal %u KB, psram %u KB\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024,
       heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024);
   return true;
 }
 
-void halo_loop() {
+void oriole_loop() {
   hc_loop();
   if (report_ready) {
     const Stats &s = report;
@@ -611,7 +611,7 @@ void halo_loop() {
       LOG("%s: %.0f fps drawn of %.0f (%lu%% behind the scan), frame %.2f ms (max %.2f), %.1f bands %.0f%% of "
           "screen, update %.2f ms (max %.2f), missed %lu, late %lu\n", cfg.name, s.drawn / sec, s.ticks / sec,
           (unsigned long)(100 * s.chased / s.drawn), s.sum_us / 1000.0f / s.drawn, s.max_us / 1000.0f,
-          (float)s.bands / s.drawn, 100.0f * s.px / s.drawn / (HALO_W * HALO_H),
+          (float)s.bands / s.drawn, 100.0f * s.px / s.drawn / (ORIOLE_W * ORIOLE_H),
           s.update_us / 1000.0f / max((uint32_t)1, s.ticks), s.update_max / 1000.0f, (unsigned long)s.missed,
           (unsigned long)s.late);
     else

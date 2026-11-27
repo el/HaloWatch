@@ -1,4 +1,4 @@
-// Oriole — a watch with a voice assistant, on its own UI library Halo.
+// Oriole — a watch with a voice assistant, on its own UI library Oriole.
 //
 // Hold BOOT and talk, let go and the answer is spoken: Gemini Live over Wi-Fi (gemini.h — the engine, assistant.h —
 // the screen and push-to-talk). Everything is set up from a web page over USB — Wi-Fi, the API key, the voice and
@@ -8,7 +8,7 @@
 // The home is the watch face (face.h): the date, a big clock (from the internet: net.h) and the weather pill (real
 // weather from Open-Meteo: weather.h); a tap on the pill — the Weather screen right over the face (Fade; back — swipe
 // up from the bottom edge). Swipe up on the face — the gallery (Fade), swipe down from its top edge — back to the face
-// (halo_nav_face); from any screen of the gallery — its own gesture to the face. Back on the face — next time the
+// (oriole_nav_face); from any screen of the gallery — its own gesture to the face. Back on the face — next time the
 // gallery starts from the top.
 //
 // The gallery — the WearKit carousel one to one: a Wear OS card list (TransformingLazyColumn: cards shrink and fade
@@ -18,16 +18,16 @@
 // (settings.h: "Watch face" — face.h, "Display" — display.h, "Sound" — sound.h, "Battery" — battery.h, "Device"). PWR locks the touch screen (display.h), a long press unlocks.
 // Left alone, the watch dims to Always On and sleeps (power.h).
 //
-// What comes from where (lib/Halo, docs/halo.md): the list — halo_list_*, transitions — halo_nav_*, arcs — HI_ARC, the
-// time along the arc — halo_text_arc, sound and the microphones — halo_audio_*, halo_mic_*. Only what changed goes to
+// What comes from where (lib/Oriole, docs/oriole.md): the list — oriole_list_*, transitions — oriole_nav_*, arcs — HI_ARC, the
+// time along the arc — oriole_text_arc, sound and the microphones — oriole_audio_*, oriole_mic_*. Only what changed goes to
 // the display: at rest no frames are drawn at all.
-// Commands: face / face off (the face / the gallery), open N (0 Gemini, 1 Notifications, 2 Music, 3 Weather, 4 World clock, 5 Timer,
-// 6 Stopwatch, 7 Level, 8 Games, 9 Settings), back, tap/press/
+// Commands: face / face off (the face / the gallery), open N (0 Gemini, 1 Notifications, 2 Music, 3 Calendar, 4 Weather, 5 World clock, 6 Home,
+// 7 Camera, 8 Timer, 9 Stopwatch, 10 Level, 11 Noise, 12 Games, 13 Settings), back, tap/press/
 // swipe/drag/fling (an artificial finger); the controller's: cfg, set, status, time, wifi, weather, ai, ask, mic test,
 // reboot; instruments — trace, rec, shot, prof, sys, log.
 #pragma GCC optimize("O3", "fast-math")
-#include <Halo.h>
-#include "src/halo_assets.h"
+#include <Oriole.h>
+#include "src/oriole_assets.h"
 #include "psram.h"   // psram_new: big UI state in PSRAM
 #include "config.h"  // settings in flash; the web controller's serial protocol
 #include "net.h"     // Wi-Fi on demand, the clock from the internet, HTTPS (before the short macros below: W, CX, DP)
@@ -40,22 +40,22 @@
 #define DIM 0x9E9E9E      // второстепенное
 #define CARD_HI 0x2E3034  // кнопка (surfaceContainerHigh)
 
-static HaloSpringK K_M3_DEFAULT, K_PRESS, K_RELEASE, K_SC_VIS, K_PAGER;
+static OrioleSpringK K_M3_DEFAULT, K_PRESS, K_RELEASE, K_SC_VIS, K_PAGER;
 struct Press {  // нажатие кнопки (ниже — press_update)
-  HaloSpring s;
+  OrioleSpring s;
   bool going_down;
 };
 
-// Текст по середине букв (mid — halo_text_mid) в (x, y): так ставит текст WearKit (text_center). on — на чём лежит
-// (сплошная карточка, круг или &halo_black): края букв тогда — готовыми цветами, без смешивания
-static void text_mid(HaloItem &it, const HaloFont &f, const char *s, float mid, float x, float y, float sc,
-                     uint32_t color, float alpha, const HaloItem *on) {
+// Текст по середине букв (mid — oriole_text_mid) в (x, y): так ставит текст WearKit (text_center). on — на чём лежит
+// (сплошная карточка, круг или &oriole_black): края букв тогда — готовыми цветами, без смешивания
+static void text_mid(OrioleItem &it, const OrioleFont &f, const char *s, float mid, float x, float y, float sc,
+                     uint32_t color, float alpha, const OrioleItem *on) {
   it.kind = HI_TEXT, it.font = &f, it.text = s, it.align = 1, it.color = color, it.on_black = false, it.on = on;
   it.x = x, it.y = y + (f.line / 2.0f - mid) * sc, it.scale = sc, it.alpha = alpha;
 }
 // Текст от левого края x, базовая линия — на y
-static void text_base(HaloItem &it, const HaloFont &f, const char *s, float x, float y, float sc, uint32_t color,
-                      float alpha, const HaloItem *on) {
+static void text_base(OrioleItem &it, const OrioleFont &f, const char *s, float x, float y, float sc, uint32_t color,
+                      float alpha, const OrioleItem *on) {
   it.kind = HI_TEXT, it.font = &f, it.text = s, it.align = 0, it.color = color, it.on_black = false, it.on = on;
   it.x = x, it.y = y + (f.line / 2.0f - f.ascent) * sc, it.scale = sc, it.alpha = alpha;
 }
@@ -63,11 +63,11 @@ static void text_base(HaloItem &it, const HaloFont &f, const char *s, float x, f
 // ---------- Нажатие (как у кнопок Wear OS: RoundButton.kt) ----------
 // 0 — отпущена, 1 — нажата. Нажатие — очень быстрая пружина (fast × 9), отпускание — медленная с отскоком. Даже
 // короткий тап доигрывает нажатие хотя бы до 0,75 — и только потом отпускает: нажатие всегда видно
-static void press_update(Press &p, bool held, float dt, const HaloSpringK &k_down = K_PRESS) {
+static void press_update(Press &p, bool held, float dt, const OrioleSpringK &k_down = K_PRESS) {
   if (held) p.going_down = true;
   else if (p.going_down && p.s.x >= 0.75f) p.going_down = false;
   p.s.target = p.going_down ? 1 : 0;
-  halo_spring_run(p.s, p.going_down ? k_down : K_RELEASE, dt);
+  oriole_spring_run(p.s, p.going_down ? k_down : K_RELEASE, dt);
 }
 
 // ---------- Карточки ----------
@@ -77,15 +77,20 @@ struct Entry {
 };
 static const char IC_CLOCK[] = "clock", IC_WATCH[] = "stopwatch", IC_LIST[] = "list", IC_TIMER[] = "timer";  // drawn
 static const char IC_GEMINI[] = "gemini", IC_LEVEL[] = "level", IC_GAMES[] = "games";  // drawn too
+static const char IC_CAL[] = "calendar", IC_HOME[] = "home", IC_CAM[] = "camera";
 static const Entry ENTRIES[] = {  // in the order of APP_SCREENS (below the includes)
     {"Gemini", "hold BOOT to talk", IC_GEMINI, 0xA8C7FA},
     {"Notifications", "from your iPhone", "\uf0f3", 0x8AB4F8},
     {"Music", "what plays on your iPhone", "\uf001", 0xF28B82},
+    {"Calendar", "the next 7 days", IC_CAL, 0x8AB4F8},
     {"Weather", "now and hourly", "\uf185", 0xFFB030},
     {"World clock", "your cities", IC_CLOCK, 0x7FCFFF},
+    {"Home", "Home Assistant", IC_HOME, 0xFFB74D},
+    {"Camera", "the iPhone's shutter", IC_CAM, 0xE8EAED},
     {"Timer", "with an alarm", IC_TIMER, 0xFFC56B},
     {"Stopwatch", "to the hundredth", IC_WATCH, 0xF6AEA9},
     {"Level", "tilt to see", IC_LEVEL, 0x8BE3B9},
+    {"Noise", "how loud it is", "\uf130", 0xFDD663},
     {"Games", "six to play", IC_GAMES, 0xF7A8C4},
     {"Settings", "face, sound, Wi-Fi", "\uf013", 0xA8C7FA},
 };
@@ -96,7 +101,7 @@ static const Entry ENTRIES[] = {  // in the order of APP_SCREENS (below the incl
 #define M_ITEM_W 410.0f
 #define M_HEAD_H 64.0f
 #define TT_R 219.0f      // радиус середины букв времени сверху (отступ от края 2 dp)
-static HaloList menu;
+static OrioleList menu;
 static Press m_press[N_ENTRIES];
 static int m_armed = -1, open_req = -1, cur;  // cur — открытый пункт
 static volatile int cmd_open = -1;
@@ -104,31 +109,31 @@ static float tt_k = 1;             // время сверху: 1 — на мес
 static float ui_lock;              // блокировка (display.h): 0..1 — время сверху гаснет за первую половину, потом замок
 static int pw_bright = -1;         // Always On (power.h): яркость панели в нём (−1 — своя у display.h)
 static bool pw_keep_lit;           // гаснем в Always On или уже в нём: на нуле яркости панель не выключать
-static HaloSpring sc_pos;          // индикатор прокрутки: положение (догоняет за 500 мс)
-static HaloSpring sc_vis;          // и видимость: виден, пока листают, гаснет через 2 с покоя (пружина k=400)
+static OrioleSpring sc_pos;          // индикатор прокрутки: положение (догоняет за 500 мс)
+static OrioleSpring sc_vis;          // и видимость: виден, пока листают, гаснет через 2 с покоя (пружина k=400)
 static uint32_t sc_idle_ms;
-static HaloMask tt_mask;           // время сверху, «запечённое» по дуге в маску (раз в минуту)
+static OrioleMask tt_mask;           // время сверху, «запечённое» по дуге в маску (раз в минуту)
 static float tt_x, tt_y, mid_head, mid_icon, mid_time;
 static char time_str[8] = "--:--";
 static int clock_h = -1, clock_m = -1;
-static HaloItem m_head, m_time, m_sc[3];
+static OrioleItem m_head, m_time, m_sc[3];
 struct MenuDrawn {  // the cards' items, in PSRAM: internal RAM is for Wi-Fi and Bluetooth
-  HaloItem it[N_ENTRIES][12];
-  HaloItem bg[N_ENTRIES], disc[N_ENTRIES], icon[N_ENTRIES], title[N_ENTRIES], sub[N_ENTRIES];
+  OrioleItem it[N_ENTRIES][12];
+  OrioleItem bg[N_ENTRIES], disc[N_ENTRIES], icon[N_ENTRIES], title[N_ENTRIES], sub[N_ENTRIES];
 };
 static MenuDrawn &m_drawn = psram_new<MenuDrawn>();
-static HaloItem (&m_bg)[N_ENTRIES] = m_drawn.bg, (&m_disc)[N_ENTRIES] = m_drawn.disc, (&m_icon)[N_ENTRIES] = m_drawn.icon;
-static HaloItem (&m_title)[N_ENTRIES] = m_drawn.title, (&m_sub)[N_ENTRIES] = m_drawn.sub;
+static OrioleItem (&m_bg)[N_ENTRIES] = m_drawn.bg, (&m_disc)[N_ENTRIES] = m_drawn.disc, (&m_icon)[N_ENTRIES] = m_drawn.icon;
+static OrioleItem (&m_title)[N_ENTRIES] = m_drawn.title, (&m_sub)[N_ENTRIES] = m_drawn.sub;
 
 // An icon drawn with rings and lines (IC_*), on the card's disc (its color: bg); a = 0 hides it. 12 items
-static void drawn_icon(HaloItem *it, const char *kind, float x, float y, float s, float a, const HaloView &v,
+static void drawn_icon(OrioleItem *it, const char *kind, float x, float y, float s, float a, const OrioleView &v,
                        uint32_t bg = 0) {
   const uint32_t c = 0x1B1B1F;
   for (int i = 0; i < 12; i++) it[i].kind = HI_LINE, it[i].color = c, it[i].color2 = c, it[i].scale = 1, it[i].alpha = 0;
-  auto line = [&](HaloItem &l, float x0, float y0, float x1, float y1, float hw) {
+  auto line = [&](OrioleItem &l, float x0, float y0, float x1, float y1, float hw) {
     l.kind = HI_LINE, l.x = x + x0 * s, l.y = y + y0 * s, l.w = x + x1 * s, l.h = y + y1 * s, l.r = hw * s, l.alpha = a;
   };
-  auto ring = [&](HaloItem &r, float cx, float cy, float rr) {
+  auto ring = [&](OrioleItem &r, float cx, float cy, float rr) {
     r.kind = HI_RING, r.x = x + cx * s, r.y = y + cy * s, r.r = rr * s, r.w = 3.5f * s, r.v = 1, r.alpha = a;
   };
   if (kind == IC_CLOCK) ring(it[0], 0, 0, 12), line(it[1], 0, 0, 0, -7, 1.8f), line(it[2], 0, 0, 6, 0, 1.8f);
@@ -149,29 +154,48 @@ static void drawn_icon(HaloItem *it, const char *kind, float x, float y, float s
   else if (kind == IC_GAMES) {  // a die: a dark square with four dots in the disc's color
     it[0].kind = HI_RRECT, it[0].x = x, it[0].y = y, it[0].w = 24 * s, it[0].h = 24 * s, it[0].r = 6 * s, it[0].alpha = a;
     for (int i = 0; i < 4; i++) {
-      HaloItem &d = it[1 + i];
+      OrioleItem &d = it[1 + i];
       d.kind = HI_CIRCLE, d.x = x + (i % 2 ? 5.5f : -5.5f) * s, d.y = y + (i / 2 ? 5.5f : -5.5f) * s, d.r = 2.6f * s;
       d.color = bg, d.alpha = a;
     }
+  } else if (kind == IC_CAL) {  // a page: the dark sheet, its lighter face, two rings on top
+    it[0].kind = HI_RRECT, it[0].x = x, it[0].y = y + 1 * s, it[0].w = 24 * s, it[0].h = 22 * s, it[0].r = 4 * s;
+    it[0].alpha = a;
+    it[1].kind = HI_RRECT, it[1].x = x, it[1].y = y + 4 * s, it[1].w = 18 * s, it[1].h = 11 * s, it[1].r = 2 * s;
+    it[1].color = bg, it[1].alpha = a;
+    line(it[2], -6, -13, -6, -8, 1.8f), line(it[3], 6, -13, 6, -8, 1.8f);
+  } else if (kind == IC_HOME) {  // a roof and a house with a door
+    line(it[0], -12, -1, 0, -12, 2.2f), line(it[1], 0, -12, 12, -1, 2.2f);
+    it[2].kind = HI_RRECT, it[2].x = x, it[2].y = y + 5 * s, it[2].w = 18 * s, it[2].h = 14 * s, it[2].r = 2 * s;
+    it[2].alpha = a;
+    it[3].kind = HI_RRECT, it[3].x = x, it[3].y = y + 8 * s, it[3].w = 6 * s, it[3].h = 9 * s, it[3].r = 1.5f * s;
+    it[3].color = bg, it[3].alpha = a;
+  } else if (kind == IC_CAM) {  // a body, its bump, the lens
+    it[0].kind = HI_RRECT, it[0].x = x, it[0].y = y + 2 * s, it[0].w = 26 * s, it[0].h = 18 * s, it[0].r = 4 * s;
+    it[0].alpha = a;
+    it[1].kind = HI_RRECT, it[1].x = x - 4 * s, it[1].y = y - 8 * s, it[1].w = 10 * s, it[1].h = 6 * s, it[1].r = 2 * s;
+    it[1].alpha = a;
+    it[2].kind = HI_CIRCLE, it[2].x = x, it[2].y = y + 2 * s, it[2].r = 6 * s, it[2].color = bg, it[2].alpha = a;
+    it[3].kind = HI_CIRCLE, it[3].x = x, it[3].y = y + 2 * s, it[3].r = 3 * s, it[3].alpha = a;
   } else if (kind == IC_LIST)
     for (int i = 0; i < 3; i++) line(it[i], -10, -8 + 8 * i, 10, -8 + 8 * i, 1.8f);
-  for (int i = 0; i < 12; i++) halo_view_commit(it[i], v);
+  for (int i = 0; i < 12; i++) oriole_view_commit(it[i], v);
 }
 
-// Пришли на циферблат (halo_nav_face зовёт enter главного): в следующий раз галерея — с начала, как при запуске
+// Пришли на циферблат (oriole_nav_face зовёт enter главного): в следующий раз галерея — с начала, как при запуске
 static void menu_enter() {
-  halo_list_reset(menu);
+  oriole_list_reset(menu);
   m_armed = -1, tt_k = 1;
-  halo_spring_set(sc_pos, 0), halo_spring_set(sc_vis, 0);
-  for (auto &p : m_press) halo_spring_set(p.s, 0), p.going_down = false;
+  oriole_spring_set(sc_pos, 0), oriole_spring_set(sc_vis, 0);
+  for (auto &p : m_press) oriole_spring_set(p.s, 0), p.going_down = false;
 }
 
 static void menu_update(float dt) {
-  HaloFinger &f = halo_finger;
-  halo_list_update(menu, dt);
+  OrioleFinger &f = oriole_finger;
+  oriole_list_update(menu, dt);
   // Нажатие на карточку — анимация нажатия, отпустил — открыть
   if (f.pressed) {
-    const int i = f.owner ? -1 : halo_list_hit(menu, f.y0);  // a touch a banner took (ancs) is not a card's
+    const int i = f.owner ? -1 : oriole_list_hit(menu, f.y0);  // a touch a banner took (ancs) is not a card's
     m_armed = i >= 1 ? i - 1 : -1;
     if (m_armed >= 0 && fabsf(f.x0 - CX) > M_ITEM_W / 2 * menu.fx[i].s) m_armed = -1;
   }
@@ -180,80 +204,81 @@ static void menu_update(float dt) {
   for (int i = 0; i < N_ENTRIES; i++) press_update(m_press[i], i == m_armed && f.down, dt);
   if (!f.down) m_armed = -1;
   // Время сверху уезжает и уменьшается за первые 36 dp прокрутки (ScrollAway: сдвиг 24 dp, до 0,5)
-  tt_k = 1 - halo_clamp01((menu.top - menu.scroll) / (36 * DP));
-  sc_pos.target = halo_list_progress(menu);
-  halo_spring_run(sc_pos, K_M3_DEFAULT, dt);
-  if (menu.moving || f.owner == &menu) sc_idle_ms = halo_ms();
-  sc_vis.target = halo_ms() - sc_idle_ms < 2000;
-  halo_spring_run(sc_vis, K_SC_VIS, dt);
+  tt_k = 1 - oriole_clamp01((menu.top - menu.scroll) / (36 * DP));
+  sc_pos.target = oriole_list_progress(menu);
+  oriole_spring_run(sc_pos, K_M3_DEFAULT, dt);
+  if (menu.moving || f.owner == &menu) sc_idle_ms = oriole_ms();
+  sc_vis.target = oriole_ms() - sc_idle_ms < 2000;
+  oriole_spring_run(sc_vis, K_SC_VIS, dt);
 }
 
-static void menu_layout(const HaloView &v) {
-  const HaloListFx &h = menu.fx[0];
-  if (menu.moving && v.a > 0 && v.s >= 0.999f) halo_subpixel = true;  // лента едет — буквы с долей пикселя, иначе дрожат
-  text_mid(m_head, t_title, "Oriole", mid_head, CX, h.top + M_HEAD_H / 2, 1, TEXT, h.a_bg, &halo_black);
+static void menu_layout(const OrioleView &v) {
+  const OrioleListFx &h = menu.fx[0];
+  if (menu.moving && v.a > 0 && v.s >= 0.999f) oriole_subpixel = true;  // лента едет — буквы с долей пикселя, иначе дрожат
+  text_mid(m_head, t_title, "Oriole", mid_head, CX, h.top + M_HEAD_H / 2, 1, TEXT, h.a_bg, &oriole_black);
   m_head.on_black = true;
-  halo_view_commit(m_head, v);
+  oriole_view_commit(m_head, v);
   for (int k = 0; k < N_ENTRIES; k++) {
-    const HaloListFx &f = menu.fx[k + 1];
+    const OrioleListFx &f = menu.fx[k + 1];
     const Entry &d = ENTRIES[k];
-    const bool vis = halo_list_item_visible(menu, k + 1);
+    const bool vis = oriole_list_item_visible(menu, k + 1);
     const float s = f.s, h = M_ITEM_H * s, w = M_ITEM_W * s, x0 = CX - w / 2, y0 = f.top;
-    const float p = halo_clamp01(m_press[k].s.x), ac = vis ? f.a_c : 0, ix = x0 + 56 * s, iy = y0 + h / 2;
+    const float p = oriole_clamp01(m_press[k].s.x), ac = vis ? f.a_c : 0, ix = x0 + 56 * s, iy = y0 + h / 2;
     // Фон: нажатая кнопка — меньше скругление (форма «сжимается»: 26 dp → 18 dp)
-    HaloItem &bg = m_bg[k];
+    OrioleItem &bg = m_bg[k];
     bg.kind = HI_RRECT, bg.x = CX, bg.y = y0 + h / 2, bg.w = M_ITEM_W, bg.h = M_ITEM_H, bg.scale = s;
     bg.r = 52 + (36 - 52) * p, bg.color = CARD_HI, bg.alpha = vis ? f.a_bg : 0, bg.on_black = true;
     // Круг значка — непрозрачный поверх карточки, значок и текст — с прозрачностью содержимого
-    HaloItem &dc = m_disc[k];
+    OrioleItem &dc = m_disc[k];
     dc.kind = HI_CIRCLE, dc.x = ix, dc.y = iy, dc.r = 32, dc.scale = s, dc.color = d.color, dc.alpha = ac;
     dc.on_black = true;
     const bool drawn = d.icon == IC_CLOCK || d.icon == IC_WATCH || d.icon == IC_LIST || d.icon == IC_TIMER ||
-                       d.icon == IC_GEMINI || d.icon == IC_LEVEL || d.icon == IC_GAMES;
+                       d.icon == IC_GEMINI || d.icon == IC_LEVEL || d.icon == IC_GAMES || d.icon == IC_CAL ||
+                       d.icon == IC_HOME || d.icon == IC_CAM;
     text_mid(m_icon[k], ic24, drawn ? "" : d.icon, mid_icon, ix, iy, s, 0x1B1B1F, ac, &dc);
     drawn_icon(m_drawn.it[k], drawn ? d.icon : "", ix, iy, s, drawn ? ac : 0, v, d.color);
     text_base(m_title[k], t24, d.title, x0 + 104 * s, y0 + 46 * s, s, TEXT, ac, &bg);
     text_base(m_sub[k], t20, d.sub, x0 + 104 * s, y0 + 80 * s, s, DIM, ac, &bg);
-    halo_view_commit(bg, v), halo_view_commit(dc, v), halo_view_commit(m_icon[k], v);
-    halo_view_commit(m_title[k], v), halo_view_commit(m_sub[k], v);
+    oriole_view_commit(bg, v), oriole_view_commit(dc, v), oriole_view_commit(m_icon[k], v);
+    oriole_view_commit(m_title[k], v), oriole_view_commit(m_sub[k], v);
   }
   // Время по дуге сверху: при прокрутке уезжает вверх на 24 dp, уменьшается и гаснет до 0,5 — и пропадает
   // (маска, запечённая раз в минуту; масштаб — от верхней середины)
   const float k = 0.5f + 0.5f * tt_k, top = tt_y - 24 * DP * (1 - tt_k), left = CX - (CX - tt_x) * k;
-  m_time.kind = HI_MASK, m_time.mask = &tt_mask, m_time.color = 0xC6C6C6, m_time.on_black = true, m_time.on = &halo_black;
+  m_time.kind = HI_MASK, m_time.mask = &tt_mask, m_time.color = 0xC6C6C6, m_time.on_black = true, m_time.on = &oriole_black;
   m_time.x = left + tt_mask.w * k / 2, m_time.y = top + tt_mask.h * k / 2, m_time.scale = k;
-  m_time.alpha = tt_k > 0.02f && tt_mask.bits ? k * (1 - halo_clamp01(ui_lock * 2)) : 0;
-  halo_view_commit(m_time, v);
+  m_time.alpha = tt_k > 0.02f && tt_mask.bits ? k * (1 - oriole_clamp01(ui_lock * 2)) : 0;
+  oriole_view_commit(m_time, v);
   // Индикатор прокрутки справа (ScrollIndicator): дорожка 50 dp по дуге, ползунок 0,3..0,7 её длины, зазоры 3 dp,
   // толщина 6 dp, круглые концы
   const float r = 233 - 2 * DP - 3 * DP, len = 50 * DP / r, gap = (6 + 3) * DP / r;
-  const float a0 = HALO_PI / 2 - len / 2, size = len * constrain(halo_list_visible(menu), 0.3f, 0.7f);
-  const float t0 = a0 + (len - size) * halo_clamp01(sc_pos.x), t1 = t0 + size, a = sc_vis.x > 0.01f ? sc_vis.x : 0;
+  const float a0 = ORIOLE_PI / 2 - len / 2, size = len * constrain(oriole_list_visible(menu), 0.3f, 0.7f);
+  const float t0 = a0 + (len - size) * oriole_clamp01(sc_pos.x), t1 = t0 + size, a = sc_vis.x > 0.01f ? sc_vis.x : 0;
   const float from[3] = {a0, t1 + gap, t0}, to[3] = {t0 - gap, a0 + len, t1};  // дорожка до, дорожка после, ползунок
   for (int i = 0; i < 3; i++) {
-    HaloItem &it = m_sc[i];
+    OrioleItem &it = m_sc[i];
     it.kind = HI_ARC, it.x = CX, it.y = CX, it.r = r, it.w = 6 * DP, it.scale = 1, it.a0 = from[i], it.a1 = to[i];
     it.color = i == 2 ? 0xC6C6C6 : 0x333333, it.on_black = true, it.alpha = from[i] < to[i] ? a : 0;
-    halo_view_commit(it, v);
+    oriole_view_commit(it, v);
   }
 }
 
 static void menu_draw() {
-  halo_item_draw(m_head);
+  oriole_item_draw(m_head);
   for (int k = 0; k < N_ENTRIES; k++) {
-    halo_item_draw(m_bg[k]), halo_item_draw(m_disc[k]), halo_item_draw(m_icon[k]);
-    halo_item_draw(m_title[k]), halo_item_draw(m_sub[k]);
-    for (auto &it : m_drawn.it[k]) halo_item_draw(it);
+    oriole_item_draw(m_bg[k]), oriole_item_draw(m_disc[k]), oriole_item_draw(m_icon[k]);
+    oriole_item_draw(m_title[k]), oriole_item_draw(m_sub[k]);
+    for (auto &it : m_drawn.it[k]) oriole_item_draw(it);
   }
-  halo_item_draw(m_time);
-  for (auto &it : m_sc) halo_item_draw(it);
+  oriole_item_draw(m_time);
+  for (auto &it : m_sc) oriole_item_draw(it);
 }
 
 // Время сверху: сменилась минута — запечь по дуге заново
 static void clock_tick() {
   static uint32_t checked;
-  if (halo_ms() - checked < 250 || !halo_clock_valid()) return;
-  checked = halo_ms();
+  if (oriole_ms() - checked < 250 || !oriole_clock_valid()) return;
+  checked = oriole_ms();
   const time_t now = time(nullptr);
   struct tm t;
   localtime_r(&now, &t);
@@ -262,7 +287,7 @@ static void clock_tick() {
   c24 = cfg.clock24;
   clock_h = t.tm_hour, clock_m = t.tm_min;
   snprintf(time_str, sizeof(time_str), "%d:%02d", cfg.clock24 ? clock_h : clock_h % 12 ? clock_h % 12 : 12, clock_m);
-  halo_text_arc(tt_mask, t24, time_str, mid_time, TT_R, 0, false, 1, &tt_x, &tt_y);
+  oriole_text_arc(tt_mask, t24, time_str, mid_time, TT_R, 0, false, 1, &tt_x, &tt_y);
 }
 
 static void menu_build() {
@@ -270,13 +295,14 @@ static void menu_build() {
   heights[0] = M_HEAD_H;
   for (int i = 0; i < N_ENTRIES; i++) heights[i + 1] = M_ITEM_H;
   // Низ последней карточки в конце ленты — 333 (так было и с кнопкой у края под ней)
-  halo_list_init(menu, heights, N_ENTRIES + 1, 64, 333, true);
-  mid_head = halo_text_mid(t_title, "Oriole");
-  mid_icon = halo_text_mid(ic24, ENTRIES[1].icon);  // все значки — по одной середине (как в WearKit)
-  mid_time = halo_text_mid(t24, "0123456789");
-  halo_text_arc(tt_mask, t24, time_str, mid_time, TT_R, 0, false, 1, &tt_x, &tt_y);
+  oriole_list_init(menu, heights, N_ENTRIES + 1, 64, 333, true);
+  mid_head = oriole_text_mid(t_title, "Oriole");
+  mid_icon = oriole_text_mid(ic24, ENTRIES[1].icon);  // все значки — по одной середине (как в WearKit)
+  mid_time = oriole_text_mid(t24, "0123456789");
+  oriole_text_arc(tt_mask, t24, time_str, mid_time, TT_R, 0, false, 1, &tt_x, &tt_y);
 }
 
+#include "calendar.h"   // the next 7 days from a private iCal link (read with the weather)
 #include "weather.h"    // экран «Weather» (погода по макету design/weather_mockup.webp), настоящая — от Open-Meteo
 #include "face.h"       // циферблат (по макету design/face_mockup.webp)
 #include "display.h"    // экран Display: яркость, PWR — блокировка
@@ -289,24 +315,28 @@ static void menu_build() {
 #include "ancs.h"       // iPhone notifications over Bluetooth LE (ANCS)
 #include "settings.h"   // Settings: Watch face, Display, Sound, Assistant, Wi-Fi, Battery, Device; storage in flash
 #include "apps.h"       // Notifications, Music, History, World clock, Timer, Stopwatch; the face's iPhone bits
-#include "games.h"      // Level, Pop, Tilt
+#include "games.h"      // Level and the games
+#include "home.h"       // Home Assistant
+#include "noise.h"      // the Noise app
+#include "panels.h"     // beside the face: Quick settings (down from the top), Tiles (left)
 #include "status.h"     // the controller's `status`; reactions to changed settings
 
 // ---------- Кадр ----------
 // Жест на циферблат — под то, как экран движется: листалка с точками (Weather) — вверх от нижнего края, как
 // назад с погоды поверх циферблата; Settings — оба, но только от самого края (вниз — от верхних 90 px, вверх — от
 // нижних 70), остальное — прокрутка списка; Assistant — оба; сама галерея — только вниз от верхнего края
-static const HaloScreen MENU = {menu_enter, menu_update, menu_layout, menu_draw};
-static const HaloScreen *const APP_SCREENS[N_ENTRIES] = {&ASSISTANT,        &NOTIF_SCREEN, &MUSIC_SCREEN, &WEATHER,
-                                                         &WORLD_SCREEN,     &TIMER_SCREEN, &STOPWATCH_SCREEN,
-                                                         &LEVEL_SCREEN,     &GAMES_SCREEN, &SETTINGS};
-static const HaloScreen FACE = {nullptr, face_update, [](const HaloView &v) { face_layout(v), face_pick_layout(v); },
+static const OrioleScreen MENU = {menu_enter, menu_update, menu_layout, menu_draw};
+static const OrioleScreen *const APP_SCREENS[N_ENTRIES] = {
+    &ASSISTANT,    &NOTIF_SCREEN,  &MUSIC_SCREEN,     &CALENDAR_SCREEN, &WEATHER,      &WORLD_SCREEN, &HOME_SCREEN,
+    &CAMERA_SCREEN, &TIMER_SCREEN, &STOPWATCH_SCREEN, &LEVEL_SCREEN,    &NOISE_SCREEN, &GAMES_SCREEN, &SETTINGS};
+static const OrioleScreen FACE = {nullptr, face_update, [](const OrioleView &v) { face_layout(v), face_pick_layout(v); },
                                 face_draw};
 
 static void update(float dt) {
-  halo_finger_update();  // палец — раз в кадр, в начале
+  oriole_finger_update();  // палец — раз в кадр, в начале
   timer_tick();          // the timer rings (and wakes the board) — before power_tick sees the wake
   notif_tick();          // a new notification: the screen on, a ding
+  noise_tick();          // the Noise screen gone: the mics off
   power_tick(dt);        // Always On и сон — до циферблата: в Always On цифры сменяются без прокрутки
   assistant_tick(dt);    // BOOT held — talking (after power_tick: BOOT wakes the board there first)
   clock_tick();
@@ -314,13 +344,23 @@ static void update(float dt) {
   display_tick(dt);     // яркость (плавно) и блокировка — где бы ни были
   if (pw_mode == PW_AOD) return power_layout();  // Always On: только тусклые дата и часы
   if (cmd_open >= 0) open_req = cmd_open, cmd_open = -1;
-  if (open_req >= 0 && halo_nav_at_home()) {  // открыть: переход Android 16
+  // A long press in Quick settings (panels.h): it closes; then the gallery, its app (Settings), then the page
+  if (qs_goto_app > -2) {
+    if (oriole_nav_on_face() && !oriole_nav_at_home()) oriole_nav_to_face(false);
+    if (oriole_nav_at_home()) {
+      int app = qs_goto_app;
+      for (int i = 0; app < 0 && i < N_ENTRIES; i++)
+        if (APP_SCREENS[i] == &SETTINGS) app = i;
+      open_req = app, qs_goto_app = -2;
+    }
+  } else if (qs_goto_page && oriole_nav_open(*qs_goto_page)) qs_goto_page = nullptr;  // once Settings is in place
+  if (open_req >= 0 && oriole_nav_at_home()) {  // открыть: переход Android 16
     cur = open_req;
-    halo_nav_open(*APP_SCREENS[cur]);
+    oriole_nav_open(*APP_SCREENS[cur]);
   }
   open_req = -1;
   banner_update(dt);    // a notification's banner: before the screens, a tap on it is its own
-  halo_nav_update(dt);  // свайпы к циферблату и назад, переходы, update и раскладка экранов
+  oriole_nav_update(dt);  // свайпы к циферблату и назад, переходы, update и раскладка экранов
   display_overlay_layout();    // подсказка блокировки — поверх всего
   assistant_overlay_layout();  // the assistant's dot, on the other screens
   banner_layout();             // a new notification, over everything
@@ -328,7 +368,7 @@ static void update(float dt) {
 
 static void draw() {  // оба ядра, каждое — свою часть пачки строк
   if (pw_mode == PW_AOD) return power_draw();
-  halo_nav_draw();
+  oriole_nav_draw();
   display_overlay_draw();
   assistant_overlay_draw();
   banner_draw();
@@ -337,11 +377,11 @@ static void draw() {  // оба ядра, каждое — свою часть �
 void setup() {
   setenv("TZ", "UTC0", 1), tzset();  // until the time zone is known (net.h)
   cfg_load();  // the controller's settings — from flash, before anything uses them
-  K_M3_DEFAULT = halo_spring(HALO_M3_DEFAULT);
-  K_PRESS = halo_spring(0.222f / 3, 0.70f);  // нажатие: в 3 раза быстрее expressive fast (жёсткость × 9)
-  K_RELEASE = halo_spring(HALO_M3X_SLOW);    // отпускание — медленно, с лёгким отскоком
-  K_SC_VIS = halo_spring(halo_stiff(400), 1);
-  K_PAGER = halo_spring(HALO_M3_PAGER);
+  K_M3_DEFAULT = oriole_spring(ORIOLE_M3_DEFAULT);
+  K_PRESS = oriole_spring(0.222f / 3, 0.70f);  // нажатие: в 3 раза быстрее expressive fast (жёсткость × 9)
+  K_RELEASE = oriole_spring(ORIOLE_M3X_SLOW);    // отпускание — медленно, с лёгким отскоком
+  K_SC_VIS = oriole_spring(oriole_stiff(400), 1);
+  K_PAGER = oriole_spring(ORIOLE_M3_PAGER);
   menu_build();
   weather_build();
   settings_load();  // яркость — из флеша
@@ -354,16 +394,18 @@ void setup() {
   settings_build();
   apps_build();
   games_build();
-  halo_nav_begin(MENU);  // главный — меню; команда back — назад
-  halo_nav_face(FACE);   // под ним — циферблат: с него запуск
-  halo_command("open", [](const char *a) { cmd_open = constrain(atoi(a), 0, N_ENTRIES - 1); });
-  HaloConfig cfg;
+  home_begin();          // Home Assistant: its list and its task
+  panels_build();
+  noise_build();
+  oriole_nav_begin(MENU);  // главный — меню; команда back — назад
+  oriole_nav_face(FACE);   // под ним — циферблат: с него запуск
+  oriole_command("open", [](const char *a) { cmd_open = constrain(atoi(a), 0, N_ENTRIES - 1); });
+  OrioleConfig cfg;
   cfg.name = "Oriole";
   cfg.brightness = dp_start_level();
   cfg.buffers = 2;  // two DMA strips, not three: 15 KB of internal RAM back for Bluetooth (double buffering still)  // сохранённая яркость (или самая низкая, если заблокировано) — с первого кадра
-  halo_begin(update, draw, cfg);
+  oriole_begin(update, draw, cfg);
   power_build();
-  steps_begin();         // the pedometer (after the motion sensor), today's count from flash         // датчик движения (будит, когда плату берут в руки) и команды aod, idle, sleep
   config_commands();     // cfg, set, reboot
   net_begin();
   hist_begin();
@@ -375,12 +417,11 @@ void setup() {
 }
 
 void loop() {
-  halo_loop();
+  oriole_loop();
   settings_save_poll();  // яркость — во флеш (не из задачи кадров)
   cfg_ui_poll();         // settings changed on the watch (Watch face, Sound) — into flash
   device_poll();         // Settings -> Device: restart, turn off
   battery_poll();
-  steps_poll(false);     // the pedometer, saved to flash
   bt_poll();             // an ANCS request the phone never answered
   tilt_poll();           // the accelerometer, while Level or a game is up
   games_save_poll();     // a new best score into flash        // уровень батареи раз в 5 с, история — во флеш

@@ -285,6 +285,38 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
       </div>
     </section>
 
+    <section class="card" data-section="calendar">
+      <h2>Calendar</h2>
+      <p class="sub">A private iCal link: in Google Calendar, Settings, your calendar, "Secret address in iCal format"; in iCloud, share the calendar publicly and copy its link. The watch shows the next 7 days and reads it again with the weather.</p>
+      <div class="grid">
+        <label>Calendar link (iCal)
+          <input type="password" data-key="cal_url" data-secret autocomplete="off" spellcheck="false" placeholder="not set">
+        </label>
+      </div>
+      <div class="actions">
+        <button class="primary" data-save="calendar">Save</button>
+      </div>
+    </section>
+
+    <section class="card" data-section="home">
+      <h2>Home Assistant</h2>
+      <p class="sub">The Home app switches these. The address with its IP (the watch does not resolve .local names), a long-lived access token (your Home Assistant profile, Security), and the entities, separated by semicolons.</p>
+      <div class="grid">
+        <label>Address
+          <input type="text" data-key="ha_url" spellcheck="false" placeholder="http://192.168.1.20:8123">
+        </label>
+        <label>Access token
+          <input type="password" data-key="ha_token" data-secret autocomplete="off" spellcheck="false" placeholder="not set">
+        </label>
+        <label>Entities
+          <input type="text" data-key="ha_items" spellcheck="false" placeholder="light.kitchen;switch.fan;scene.movie">
+        </label>
+      </div>
+      <div class="actions">
+        <button class="primary" data-save="home">Save</button>
+      </div>
+    </section>
+
     <section class="card">
       <h2>Watch</h2>
       <p class="sub">To flash new firmware, use Espressif's web flasher with the .bin from Releases (address 0x0).</p>
@@ -412,7 +444,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let writeChain = Promise.resolve();
 function send(line, quiet) {
   if (!writer) { toast('Connect the watch first'); return Promise.resolve(); }
-  if (!quiet) addLog('> ' + line.replace(/^(set (?:wifi_pass\d?|ai_key) ).*/, '$1••••'), 'me');
+  if (!quiet) addLog('> ' + line.replace(/^(set (?:wifi_pass\d?|ai_key|ha_token|cal_url) ).*/, '$1••••'), 'me');
   const data = new TextEncoder().encode(line + '\n');
   writeChain = writeChain.then(async () => {
     for (let i = 0; i < data.length; i += 64) {   // small pieces: the watch's USB buffer never overflows

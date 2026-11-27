@@ -1,4 +1,4 @@
-// Ядро Halo: журнал, команды из порта, трасса событий (бортовой самописец), команда sys, отправка картинок.
+// Ядро Oriole: журнал, команды из порта, трасса событий (бортовой самописец), команда sys, отправка картинок.
 // Трасса и выдача данных — в тех же форматах, что у AmoledBoard: их читают tools/trace.py, record.py, screenshot.py.
 //
 // Устройство трассы:
@@ -6,24 +6,24 @@
 //     этого ядра: на время записи прерывания своего ядра выключены (несколько тактов), поэтому без блокировок.
 //     Внутренняя память — потому что прерывания (TE, DMA) работают и тогда, когда кэш выключен (запись во флеш),
 //     а PSRAM без кэша не читается;
-//   * halo_trace_pump() переносит новые события в большой кольцевой буфер в PSRAM (64 тыс. событий, ~10 с):
-//     движок — раз в кадр, halo_loop — каждый проход;
+//   * oriole_trace_pump() переносит новые события в большой кольцевой буфер в PSRAM (64 тыс. событий, ~10 с):
+//     движок — раз в кадр, oriole_loop — каждый проход;
 //   * trace dump выдаёт большой буфер в порт: заголовок с именами событий и команд, события, контрольная сумма.
-#include "halo_internal.h"
+#include "oriole_internal.h"
 
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <freertos/task.h>
 
-volatile bool halo_quiet = false;
+volatile bool oriole_quiet = false;
 
 // ---------- Шаги запуска и безопасный режим ----------
 // Шаг запуска пишется в память RTC, которая переживает перезагрузку (но не выключение). Плата упала два раза
 // подряд — запускаемся без экрана и тача: порт жив, журнал говорит, на каком шаге было падение, прошивка
 // заливается обычным способом. Иначе цикл «упала — перезагрузилась» за минуту вешает USB так, что плату
 // спасает только выключение кнопкой.
-#define RTC_MAGIC 0x48414C4Fu  // "HALO"
+#define RTC_MAGIC 0x48414C4Fu  // "ORIOLE"
 RTC_NOINIT_ATTR static uint32_t rtc_magic, rtc_stage, rtc_crashes;
 static const char *const STAGES[] = {"core", "display bus", "display panel", "display dma", "touch", "tasks",
                                      "first frame", "running"};
@@ -56,9 +56,9 @@ static void serial_wait(bool wait) {
 #endif
 }
 
-void halo_serial_binary(bool on) {
+void oriole_serial_binary(bool on) {
   if (on) {
-    halo_quiet = true;
+    oriole_quiet = true;
     esp_log_level_set("*", ESP_LOG_NONE);
     serial_wait(true);
     return;
@@ -66,7 +66,7 @@ void halo_serial_binary(bool on) {
   Serial.flush();
   serial_wait(false);
   esp_log_level_set("*", ESP_LOG_ERROR);
-  halo_quiet = false;
+  oriole_quiet = false;
 }
 
 // ---------- Журнал: печать в порт и последние 8 КБ строк в PSRAM (команда log) ----------
@@ -76,7 +76,7 @@ static size_t log_pos;
 static bool log_wrapped;
 static portMUX_TYPE log_mux = portMUX_INITIALIZER_UNLOCKED;
 
-void halo_logf(const char *fmt, ...) {
+void oriole_logf(const char *fmt, ...) {
   char line[192];
   const int n = snprintf(line, sizeof(line), "[%7.1f] ", millis() / 1000.0f);
   va_list ap;
@@ -94,7 +94,7 @@ void halo_logf(const char *fmt, ...) {
     if (log_pos == LOG_SIZE) log_pos = 0, log_wrapped = true;
   }
   portEXIT_CRITICAL(&log_mux);
-  if (!halo_quiet) Serial.print(line + n);
+  if (!oriole_quiet) Serial.print(line + n);
 }
 
 static void print_log(const char *) {
@@ -124,7 +124,7 @@ static void print_log(const char *) {
 void hc_send_image(const uint16_t *px, int w, int h) {
   uint32_t sum = 0;
   for (size_t i = 0; i < (size_t)w * h; i++) sum += px[i];
-  halo_serial_binary(true);
+  oriole_serial_binary(true);
   Serial.printf("SHOT %d %d\n", w, h);
   const uint8_t *p = (const uint8_t *)px;
   for (size_t left = (size_t)w * h * 2; left;) {
@@ -132,7 +132,7 @@ void hc_send_image(const uint16_t *px, int w, int h) {
     p += n, left -= n;
   }
   Serial.printf("\nSHOT END %lu\n", (unsigned long)sum);
-  halo_serial_binary(false);
+  oriole_serial_binary(false);
 }
 
 // ---------- Команды ----------
@@ -144,7 +144,7 @@ struct Command {
 static Command commands[MAX_COMMANDS];
 static int command_count;
 
-void halo_command(const char *name, void (*fn)(const char *args)) {
+void oriole_command(const char *name, void (*fn)(const char *args)) {
   for (int i = 0; i < command_count; i++)
     if (!strcmp(commands[i].name, name)) {
       commands[i].fn = fn;
@@ -216,8 +216,8 @@ void hc_begin(const char *name) {
   boot_ms = millis();
   watched = !safe && esp_task_wdt_add(nullptr) == ESP_OK;
   hc_stage(0);
-  halo_command("log", print_log);
-  halo_command("help", [](const char *) {
+  oriole_command("log", print_log);
+  oriole_command("help", [](const char *) {
     Serial.print("commands:");
     for (int i = 0; i < command_count; i++) Serial.printf(" %s", commands[i].name);
     Serial.println();
@@ -226,7 +226,7 @@ void hc_begin(const char *name) {
 }
 
 // ---------- Трасса ----------
-volatile bool halo_trace_on = false;
+volatile bool oriole_trace_on = false;
 
 struct TraceRec {
   uint32_t t;  // мкс (esp_timer)
@@ -248,7 +248,7 @@ static volatile uint8_t pump_lock;
 static const char *tr_names[64];
 static char tr_kinds[64];
 
-void IRAM_ATTR halo_trace_put(uint8_t ev, uint32_t t, uint16_t a, uint16_t b) {
+void IRAM_ATTR oriole_trace_put(uint8_t ev, uint32_t t, uint16_t a, uint16_t b) {
   const uint32_t irq = portSET_INTERRUPT_MASK_FROM_ISR();  // своё ядро не переключится и не прервётся
   const int c = xPortGetCoreID();
   HotRing &r = hot[c];
@@ -280,13 +280,13 @@ static void pump_locked() {
   }
 }
 
-void halo_trace_pump() {
+void oriole_trace_pump() {
   if (!arch || !pump_take()) return;  // переносит другая задача — она и перенесёт
   pump_locked();
   pump_give();
 }
 
-void halo_trace_name(uint8_t ev, const char *name, char kind) {
+void oriole_trace_name(uint8_t ev, const char *name, char kind) {
   if (ev < 64) tr_names[ev] = name, tr_kinds[ev] = kind;
 }
 
@@ -303,13 +303,13 @@ static void trace_enable(bool on) {
     return;
   }
   if (on) {  // запись с начала
-    halo_trace_on = false;
+    oriole_trace_on = false;
     while (!pump_take()) delay(1);
     for (int c = 0; c < 2; c++) hot[c].tail = hot[c].head, hot[c].dropped = 0;
     arch_n = 0;
     pump_give();
   }
-  halo_trace_on = on;
+  oriole_trace_on = on;
 }
 
 // ---------- Счётчики: память, загрузка ядер, температура ----------
@@ -341,10 +341,10 @@ static void sample_counters() {
   }
 }
 
-// halo_loop: перенести события и снять счётчики
+// oriole_loop: перенести события и снять счётчики
 static void hc_trace_tick() {
-  if (!halo_trace_on) return;
-  halo_trace_pump();
+  if (!oriole_trace_on) return;
+  oriole_trace_pump();
   sample_counters();
 }
 
@@ -356,8 +356,8 @@ static void trace_dump() {
     Serial.println("TRACE END 0");
     return;
   }
-  const bool was_on = halo_trace_on;
-  halo_trace_on = false;
+  const bool was_on = oriole_trace_on;
+  oriole_trace_on = false;
   delay(2);  // запись, начатая до выключения, успевает закончиться
   while (!pump_take()) delay(1);
   pump_locked();
@@ -369,7 +369,7 @@ static void trace_dump() {
     sum += r.t + (r.a | ((uint32_t)r.m << 16));
   }
 
-  halo_serial_binary(true);
+  oriole_serial_binary(true);
   Serial.printf("TRACE %lu %lu %lu\n", (unsigned long)n, (unsigned long)dropped, (unsigned long)trace_now());
   Serial.print("NAMES");
   for (int i = 0; i < 64; i++)
@@ -387,9 +387,9 @@ static void trace_dump() {
   for (int k = 0; k < 2; k++)
     for (size_t off = 0; off < lens[k];) off += Serial.write(parts[k] + off, min<size_t>(lens[k] - off, 4096));
   Serial.printf("\nTRACE END %lu\n", (unsigned long)sum);
-  halo_serial_binary(false);
+  oriole_serial_binary(false);
   pump_give();
-  halo_trace_on = was_on;
+  oriole_trace_on = was_on;
 }
 
 // Сколько стоит запись события: выключенной трассы и включённой, и сколько — само время esp_timer.
@@ -403,18 +403,18 @@ static uint32_t bench_min(int what) {
       else trace_mark(TR_LAST);
     }
     best = min(best, esp_cpu_get_cycle_count() - c0);
-    halo_trace_pump();
+    oriole_trace_pump();
   }
   return best / 20;
 }
 
 static void trace_bench() {
-  const bool was_on = halo_trace_on;
+  const bool was_on = oriole_trace_on;
   if (!trace_alloc()) return;
   const uint32_t c_time = bench_min(0);
-  halo_trace_on = false;
+  oriole_trace_on = false;
   const uint32_t c_off = bench_min(1);
-  halo_trace_on = true;
+  oriole_trace_on = true;
   const uint32_t c_on = bench_min(1);
   trace_enable(false);
   if (was_on) trace_enable(true);  // замер испортил запись — начать заново
@@ -451,7 +451,7 @@ static void cmd_sys(const char *) {
   const int n = uxTaskGetSystemState(st, 40, &total);
   const uint32_t dt = total - prev_total;
 
-  halo_serial_binary(true);  // ответ длинный — пусть порт подождёт, журнал не вклинивается
+  oriole_serial_binary(true);  // ответ длинный — пусть порт подождёт, журнал не вклинивается
   Serial.printf("sys: up %.1f s, cpu %lu MHz, reset: %s\n", millis() / 1000.0f, (unsigned long)getCpuFrequencyMhz(),
                 reset_name(esp_reset_reason()));
   Serial.printf("memory: internal free %u KB (largest %u KB, lowest ever %u KB), dma %u KB, psram free %u KB of %u\n",
@@ -482,8 +482,8 @@ static void cmd_sys(const char *) {
   for (int i = 0; i < n && i < 40; i++) prev[i] = {st[i].xHandle, st[i].ulRunTimeCounter};
   prev_n = min(n, 40), prev_total = total;
   Serial.printf("temp %.1f C", temperatureRead());
-  Serial.printf(", vsync %lu us, trace %s\n", (unsigned long)hd_te_period(), halo_trace_on ? "on" : "off");
-  halo_serial_binary(false);
+  Serial.printf(", vsync %lu us, trace %s\n", (unsigned long)hd_te_period(), oriole_trace_on ? "on" : "off");
+  oriole_serial_binary(false);
 }
 
 static void cmd_trace(const char *a) {
@@ -495,21 +495,21 @@ static void cmd_trace(const char *a) {
 }
 
 void hc_trace_setup() {
-  halo_trace_name(TR_TE, "te", 'i');
-  halo_trace_name(TR_SCAN, "scan", 'i');
-  halo_trace_name(TR_DMA, "dma", 'X');
-  halo_trace_name(TR_WIN, "window", 'X');
-  halo_trace_name(TR_BLIT_WAIT, "buffer wait", 'X');
-  halo_trace_name(TR_TOUCH, "touch irq", 'i');
-  halo_trace_name(TR_TOUCH_READ, "touch", 'i');
-  halo_trace_name(TR_CMD, "command", 'X');
-  halo_trace_name(TR_HEAP, "internal free KB", 'C');
-  halo_trace_name(TR_HEAP_BLOCK, "internal largest KB", 'C');
-  halo_trace_name(TR_PSRAM, "psram free KB", 'C');
-  halo_trace_name(TR_LOAD0, "core0 load x10", 'C');
-  halo_trace_name(TR_LOAD1, "core1 load x10", 'C');
-  halo_trace_name(TR_TEMP, "temp x10", 'C');
-  halo_trace_name(TR_LAST, "bench", 'i');
-  halo_command("trace", cmd_trace);
-  halo_command("sys", cmd_sys);
+  oriole_trace_name(TR_TE, "te", 'i');
+  oriole_trace_name(TR_SCAN, "scan", 'i');
+  oriole_trace_name(TR_DMA, "dma", 'X');
+  oriole_trace_name(TR_WIN, "window", 'X');
+  oriole_trace_name(TR_BLIT_WAIT, "buffer wait", 'X');
+  oriole_trace_name(TR_TOUCH, "touch irq", 'i');
+  oriole_trace_name(TR_TOUCH_READ, "touch", 'i');
+  oriole_trace_name(TR_CMD, "command", 'X');
+  oriole_trace_name(TR_HEAP, "internal free KB", 'C');
+  oriole_trace_name(TR_HEAP_BLOCK, "internal largest KB", 'C');
+  oriole_trace_name(TR_PSRAM, "psram free KB", 'C');
+  oriole_trace_name(TR_LOAD0, "core0 load x10", 'C');
+  oriole_trace_name(TR_LOAD1, "core1 load x10", 'C');
+  oriole_trace_name(TR_TEMP, "temp x10", 'C');
+  oriole_trace_name(TR_LAST, "bench", 'i');
+  oriole_command("trace", cmd_trace);
+  oriole_command("sys", cmd_sys);
 }

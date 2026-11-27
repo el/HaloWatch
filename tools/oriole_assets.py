@@ -1,10 +1,10 @@
-"""Ресурсы для библиотеки Halo: шрифты, одноцветные значки и цветные картинки — в форматы Halo, пиксель в пиксель.
+"""Ресурсы для библиотеки Oriole: шрифты, одноцветные значки и цветные картинки — в форматы Oriole, пиксель в пиксель.
 
 Использование (из корня репозитория):
-  $PY tools/halo_assets.py experiments/HaloFirst
-Читает <скетч>/assets/halo.conf, пишет <скетч>/src/halo_assets.h и .cpp. Превью — build/halo_assets/<скетч>/.
+  $PY tools/oriole_assets.py experiments/OrioleFirst
+Читает <скетч>/assets/oriole.conf, пишет <скетч>/src/oriole_assets.h и .cpp. Превью — build/oriole_assets/<скетч>/.
 
-halo.conf — по строке на ресурс (# — комментарий; пути шрифтов — от tools/fonts, картинок — от папки скетча):
+oriole.conf — по строке на ресурс (# — комментарий; пути шрифтов — от tools/fonts, картинок — от папки скетча):
   font  ИМЯ  ФАЙЛ.ttf  РАЗМЕР_PX  НАБОР…       # набор: digits latin cyrillic punct, "свои буквы" или коды 0xF004
                                               # (значки Font Awesome шрифтом: ставятся по строке, как буквы)
                                               # переменный шрифт: @wght=500,ROND=100 — оси (opsz по умолчанию = кегль)
@@ -14,7 +14,7 @@ halo.conf — по строке на ресурс (# — комментарий;
 
 Почему так (а не SVG на плате): разбирать кривые и сглаживать их в каждом кадре дорого. На Mac FreeType и Pillow
 рисуют букву или значок ровно нужного размера со сглаживанием; на плате остаётся скопировать готовые пиксели.
-Форматы (lib/Halo/src/Halo.h):
+Форматы (lib/Oriole/src/Oriole.h):
   маска (буква, значок) — 4 бита на пиксель, строка (w+1)/2 байт; у строки — первый и последний непустой столбец;
   картинка — цвет × прозрачность в RGB565 (порядок дисплея) + та же 4-битная прозрачность.
 """
@@ -154,9 +154,9 @@ def do_font(out, name, path, size, chars, preview, axes=""):
     out.c.append(f"static const uint32_t {name}_codes[] = {{{', '.join(str(g[0]) for g in glyphs)}}};")
     rows = [f"  {{{w}, {h}, {ox}, {oy}, {adv}, {name}_bits + {bo}, {name}_ext + {eo}}},"
             for cp, w, h, ox, oy, adv, bo, eo in glyphs]
-    out.c.append(f"static const HaloMask {name}_glyphs[] = {{\n" + "\n".join(rows) + "\n};")
-    out.c.append(f"const HaloFont {name} = {{{size}, {line}, {ascent}, {len(glyphs)}, {name}_codes, {name}_glyphs}};")
-    out.h.append(f"extern const HaloFont {name};  // {os.path.basename(path)} {size} px, {len(glyphs)} букв, "
+    out.c.append(f"static const OrioleMask {name}_glyphs[] = {{\n" + "\n".join(rows) + "\n};")
+    out.c.append(f"const OrioleFont {name} = {{{size}, {line}, {ascent}, {len(glyphs)}, {name}_codes, {name}_glyphs}};")
+    out.h.append(f"extern const OrioleFont {name};  // {os.path.basename(path)} {size} px, {len(glyphs)} букв, "
                  f"строка {line}, базовая линия {ascent}")
     if missing:
         print(f"  {name}: в шрифте нет букв: {''.join(missing)}")
@@ -180,8 +180,8 @@ def mask_out(out, name, a, preview, note):
     b, e = pack4(a4)
     out.arr("uint8_t", f"{name}_bits", b)
     out.arr("uint8_t", f"{name}_ext", e)
-    out.c.append(f"const HaloMask {name} = {{{a4.shape[1]}, {a4.shape[0]}, 0, 0, {a4.shape[1]}, {name}_bits, {name}_ext}};")
-    out.h.append(f"extern const HaloMask {name};  // {note}, {a4.shape[1]}×{a4.shape[0]}")
+    out.c.append(f"const OrioleMask {name} = {{{a4.shape[1]}, {a4.shape[0]}, 0, 0, {a4.shape[1]}, {name}_bits, {name}_ext}};")
+    out.h.append(f"extern const OrioleMask {name};  // {note}, {a4.shape[1]}×{a4.shape[0]}")
     Image.fromarray(a).save(os.path.join(preview, f"mask_{name}.png"))
     return len(b) + len(e)
 
@@ -220,8 +220,8 @@ def do_image(out, name, path, width, preview):
     out.arr("uint16_t", f"{name}_px", px.flatten().tolist(), 16)
     out.arr("uint8_t", f"{name}_alpha", bits)
     out.arr("uint8_t", f"{name}_ext", ext)
-    out.c.append(f"const HaloImage {name} = {{{w}, {h}, {name}_px, {name}_alpha, {name}_ext}};")
-    out.h.append(f"extern const HaloImage {name};  // {os.path.basename(path)}, {w}×{h}")
+    out.c.append(f"const OrioleImage {name} = {{{w}, {h}, {name}_px, {name}_alpha, {name}_ext}};")
+    out.h.append(f"extern const OrioleImage {name};  // {os.path.basename(path)}, {w}×{h}")
     Image.fromarray(rgba).save(os.path.join(preview, f"image_{name}.png"))
     return w * h * 2 + len(bits) + len(ext)
 
@@ -230,8 +230,8 @@ def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     sketch = os.path.abspath(sys.argv[1])
-    conf = os.path.join(sketch, "assets/halo.conf")
-    preview = os.path.join(ROOT, "build/halo_assets", os.path.basename(sketch))
+    conf = os.path.join(sketch, "assets/oriole.conf")
+    preview = os.path.join(ROOT, "build/oriole_assets", os.path.basename(sketch))
     os.makedirs(preview, exist_ok=True)
     out = Out()
     total = 0
@@ -261,12 +261,12 @@ def main():
         print(f"  {kind:5} {name:14} {n / 1024:6.1f} КБ")
     src = os.path.join(sketch, "src")
     os.makedirs(src, exist_ok=True)
-    head = "// Сгенерировано tools/halo_assets.py из assets/halo.conf — руками не править.\n"
-    with open(os.path.join(src, "halo_assets.h"), "w") as f:
-        f.write(head + "#pragma once\n#include <Halo.h>\n\n" + "\n".join(out.h) + "\n")
-    with open(os.path.join(src, "halo_assets.cpp"), "w") as f:
-        f.write(head + '#include "halo_assets.h"\n\n' + "\n\n".join(out.c) + "\n")
-    print(f"всего {total / 1024:.0f} КБ во флеше → {os.path.relpath(src, ROOT)}/halo_assets.*, превью — "
+    head = "// Сгенерировано tools/oriole_assets.py из assets/oriole.conf — руками не править.\n"
+    with open(os.path.join(src, "oriole_assets.h"), "w") as f:
+        f.write(head + "#pragma once\n#include <Oriole.h>\n\n" + "\n".join(out.h) + "\n")
+    with open(os.path.join(src, "oriole_assets.cpp"), "w") as f:
+        f.write(head + '#include "oriole_assets.h"\n\n' + "\n\n".join(out.c) + "\n")
+    print(f"всего {total / 1024:.0f} КБ во флеше → {os.path.relpath(src, ROOT)}/oriole_assets.*, превью — "
           f"{os.path.relpath(preview, ROOT)}/")
 
 

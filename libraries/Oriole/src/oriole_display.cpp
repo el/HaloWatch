@@ -1,4 +1,4 @@
-// Свой драйвер дисплея CO5300 (QSPI) для Halo.
+// Свой драйвер дисплея CO5300 (QSPI) для Oriole.
 //
 // Шина SPI2 — только наша (в AmoledBoard её делили с Arduino_GFX и брали на каждый кадр — 0,06 мс, а окно первой
 // пачки шло через драйвер — ещё 0,21 мс). Драйвер ESP-IDF нужен лишь при запуске: включить панель и выставить
@@ -13,7 +13,7 @@
 // Очередь пачек: каждая — в своём DMA-буфере. Её отправляет прерывание канала DMA «всё ушло» (TOTAL_EOF): кончилась
 // пачка — тут же следующая. Свободный буфер ждём на семафоре (ядро спит, а не крутится в цикле: так было 2–4 мс
 // на кадр в AmoledBoard).
-#include "halo_internal.h"
+#include "oriole_internal.h"
 
 #include <driver/gpio.h>
 #include <driver/spi_master.h>
@@ -24,7 +24,7 @@
 #include <soc/gdma_channel.h>
 
 #define X_OFFSET 6          // смещение столбцов панели
-#define MAX_PX (HALO_ROWS * HALO_W)
+#define MAX_PX (ORIOLE_ROWS * ORIOLE_W)
 #define MAX_BUFS 4
 
 static spi_device_handle_t dev_init, dev_fast;
@@ -56,10 +56,10 @@ static int last_x = -1, last_w, last_y;  // окно прошлой пачки
 
 // ---------- Свои передачи (IRAM) ----------
 static inline void IRAM_ATTR cs_low() {
-  REG_WRITE(GPIO_OUT_W1TC_REG, 1u << HALO_PIN_CS);
+  REG_WRITE(GPIO_OUT_W1TC_REG, 1u << ORIOLE_PIN_CS);
 }
 static inline void IRAM_ATTR cs_high() {
-  REG_WRITE(GPIO_OUT_W1TS_REG, 1u << HALO_PIN_CS);
+  REG_WRITE(GPIO_OUT_W1TS_REG, 1u << ORIOLE_PIN_CS);
 }
 
 static void IRAM_ATTR set_shape(int kind, uint32_t addr) {
@@ -133,7 +133,7 @@ static void IRAM_ATTR kick() {  // под q_mux: шина свободна — �
   const Job &j = jobs[i];
   if (j.win) own_cmd(0x2A, j.caset, 4), own_cmd(0x2B, j.paset, 4), own_cmd(0x2C, 0, 0);
   fly = i;
-  fly_t = halo_trace_on ? trace_now() : 0;
+  fly_t = oriole_trace_on ? trace_now() : 0;
   q_head = (i + 1) % nbufs, q_count--;
   own_px(j.buf, j.bytes);
 }
@@ -183,7 +183,7 @@ static void take_free() {
     portEXIT_CRITICAL(&q_mux);
     if (y < 0) continue;
     xSemaphoreGive(free_sem);
-    halo_damage(0, y, HALO_W - 1, y + HALO_ROWS - 1);
+    oriole_damage(0, y, ORIOLE_W - 1, y + ORIOLE_ROWS - 1);
     if (++stalls == 1 || stalls % 100 == 0) LOG("display: DMA stalled %lu times (SPI ended first), queue restarted\n",
                                                 (unsigned long)stalls);
   }
@@ -202,7 +202,7 @@ uint16_t *hd_buffer() {
 
 void hd_send(int x0, int y, int w, int rows) {
   const bool cont = x0 == last_x && w == last_w && y == last_y;
-  const int x1 = x0 + X_OFFSET, x2 = x1 + w - 1, y2 = HALO_H - 1;  // окно — до низа экрана
+  const int x1 = x0 + X_OFFSET, x2 = x1 + w - 1, y2 = ORIOLE_H - 1;  // окно — до низа экрана
   const uint8_t win[2][4] = {{(uint8_t)(x1 >> 8), (uint8_t)x1, (uint8_t)(x2 >> 8), (uint8_t)x2},
                              {(uint8_t)(y >> 8), (uint8_t)y, (uint8_t)(y2 >> 8), (uint8_t)y2}};
   last_x = x0, last_w = w, last_y = y + rows;
@@ -256,8 +256,8 @@ static portMUX_TYPE te_mux = portMUX_INITIALIZER_UNLOCKED;  // номер сиг
 
 static void IRAM_ATTR te_isr(void *) {
   const uint32_t now = (uint32_t)esp_timer_get_time();
-  if ((REG_READ(GPIO_IN_REG) >> HALO_PIN_TE) & 1) {  // начало паузы между проходами
-    if (halo_trace_on) halo_trace_put(TR_TE, now, 0, 0);
+  if ((REG_READ(GPIO_IN_REG) >> ORIOLE_PIN_TE) & 1) {  // начало паузы между проходами
+    if (oriole_trace_on) oriole_trace_put(TR_TE, now, 0, 0);
     portENTER_CRITICAL_ISR(&te_mux);
     // Период — только между соседними сигналами: после сна или паузы панели «период» был бы длиной в сон, и движок
     // растянул бы по нему проход (вслед за проходом ждал бы секунды)
@@ -273,7 +273,7 @@ static void IRAM_ATTR te_isr(void *) {
     }
   } else {  // начало прохода по строкам
     if (now - te_rise < 2000) te_blank = now - te_rise;
-    if (halo_trace_on) halo_trace_put(TR_SCAN, now, 0, 0);
+    if (oriole_trace_on) oriole_trace_put(TR_SCAN, now, 0, 0);
   }
 }
 
@@ -360,19 +360,19 @@ static void panel_cmd(uint8_t cmd, int data = -1) {
 bool hd_begin(uint32_t hz, int buffers, uint8_t brightness) {
   // Падение во сне оставляет выводы тача и датчика движения «будить по уровню» с включённым прерыванием — перезагрузка
   // это сохраняет, и первое же прерывание (здесь ставится их служба) зацикливалось: второе падение подряд и безопасный
-  // режим с чёрным экраном (halo_power.cpp). Сначала — сбросить
-  for (int p : {HALO_PIN_TP_INT, HALO_PIN_IMU_INT1, HALO_PIN_BOOT})
+  // режим с чёрным экраном (oriole_power.cpp). Сначала — сбросить
+  for (int p : {ORIOLE_PIN_TP_INT, ORIOLE_PIN_IMU_INT1, ORIOLE_PIN_BOOT})
     gpio_wakeup_disable((gpio_num_t)p), gpio_intr_disable((gpio_num_t)p);
-  gpio_set_direction((gpio_num_t)HALO_PIN_CS, GPIO_MODE_OUTPUT);
-  gpio_set_level((gpio_num_t)HALO_PIN_CS, 1);
-  gpio_set_direction((gpio_num_t)HALO_PIN_RST, GPIO_MODE_OUTPUT);
+  gpio_set_direction((gpio_num_t)ORIOLE_PIN_CS, GPIO_MODE_OUTPUT);
+  gpio_set_level((gpio_num_t)ORIOLE_PIN_CS, 1);
+  gpio_set_direction((gpio_num_t)ORIOLE_PIN_RST, GPIO_MODE_OUTPUT);
 
   spi_bus_config_t bus = {};
-  bus.mosi_io_num = HALO_PIN_SD0;
-  bus.miso_io_num = HALO_PIN_SD1;
-  bus.quadwp_io_num = HALO_PIN_SD2;
-  bus.quadhd_io_num = HALO_PIN_SD3;
-  bus.sclk_io_num = HALO_PIN_SCLK;
+  bus.mosi_io_num = ORIOLE_PIN_SD0;
+  bus.miso_io_num = ORIOLE_PIN_SD1;
+  bus.quadwp_io_num = ORIOLE_PIN_SD2;
+  bus.quadhd_io_num = ORIOLE_PIN_SD3;
+  bus.sclk_io_num = ORIOLE_PIN_SCLK;
   bus.data4_io_num = bus.data5_io_num = bus.data6_io_num = bus.data7_io_num = -1;
   bus.max_transfer_sz = MAX_PX * 2;
   bus.flags = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_GPIO_PINS | SPICOMMON_BUSFLAG_QUAD;
@@ -387,11 +387,11 @@ bool hd_begin(uint32_t hz, int buffers, uint8_t brightness) {
 
   hc_stage(2);
   // Сброс и включение (последовательность — как у Waveshare)
-  gpio_set_level((gpio_num_t)HALO_PIN_RST, 1);
+  gpio_set_level((gpio_num_t)ORIOLE_PIN_RST, 1);
   delay(10);
-  gpio_set_level((gpio_num_t)HALO_PIN_RST, 0);
+  gpio_set_level((gpio_num_t)ORIOLE_PIN_RST, 0);
   delay(120);
-  gpio_set_level((gpio_num_t)HALO_PIN_RST, 1);
+  gpio_set_level((gpio_num_t)ORIOLE_PIN_RST, 1);
   delay(120);
   panel_cmd(0x11);  // Sleep Out
   delay(120);
@@ -413,13 +413,13 @@ bool hd_begin(uint32_t hz, int buffers, uint8_t brightness) {
     }
     memset(bufs[i], 0, MAX_PX * 2);
   }
-  const uint8_t caset[4] = {0, X_OFFSET, (uint8_t)((X_OFFSET + HALO_W - 1) >> 8), (uint8_t)(X_OFFSET + HALO_W - 1)};
-  const uint8_t paset[4] = {0, 0, (uint8_t)((HALO_H - 1) >> 8), (uint8_t)(HALO_H - 1)};
+  const uint8_t caset[4] = {0, X_OFFSET, (uint8_t)((X_OFFSET + ORIOLE_W - 1) >> 8), (uint8_t)(X_OFFSET + ORIOLE_W - 1)};
+  const uint8_t paset[4] = {0, 0, (uint8_t)((ORIOLE_H - 1) >> 8), (uint8_t)(ORIOLE_H - 1)};
   idf_tx(dev_fast, 0x2A, caset, 4, false, SHAPE_CMD4);
   idf_tx(dev_fast, 0x2B, paset, 4, false);
   idf_tx(dev_fast, 0x2C, nullptr, 0, false, SHAPE_CMD0);
-  for (int y = 0; y < HALO_H; y += HALO_ROWS)
-    idf_tx(dev_fast, 0, bufs[0], min(HALO_ROWS, HALO_H - y) * HALO_W * 2, true, SHAPE_PX);
+  for (int y = 0; y < ORIOLE_H; y += ORIOLE_ROWS)
+    idf_tx(dev_fast, 0, bufs[0], min(ORIOLE_ROWS, ORIOLE_H - y) * ORIOLE_W * 2, true, SHAPE_PX);
 
   hc_stage(3);
   // Канал GDMA, который драйвер подключил к SPI2, и своё прерывание «всё ушло»
@@ -440,12 +440,12 @@ bool hd_begin(uint32_t hz, int buffers, uint8_t brightness) {
   own_cmd(0x35, 0x00, 1);        // TE: линия поднимается в паузе между проходами
 
   gpio_config_t te = {};
-  te.pin_bit_mask = 1ull << HALO_PIN_TE;
+  te.pin_bit_mask = 1ull << ORIOLE_PIN_TE;
   te.mode = GPIO_MODE_INPUT;
   te.intr_type = GPIO_INTR_ANYEDGE;
   gpio_config(&te);
   gpio_install_isr_service(ESP_INTR_FLAG_IRAM);  // уже стоит — не страшно
-  gpio_isr_handler_add((gpio_num_t)HALO_PIN_TE, te_isr, nullptr);
+  gpio_isr_handler_add((gpio_num_t)ORIOLE_PIN_TE, te_isr, nullptr);
   LOG("display: CO5300 ok, bus %lu MHz, %d DMA buffers, DMA channel %d\n", (unsigned long)(hz / 1000000), nbufs,
       dma_ch);
   return true;

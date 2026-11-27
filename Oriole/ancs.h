@@ -15,7 +15,7 @@
 // assistant), and before it does Bluetooth stops and gives its memory back; once Wi-Fi is off, Bluetooth starts again
 // and the iPhone reconnects by itself. On every connection the iPhone sends all its notifications again: the list is
 // rebuilt from them, and one dated after Bluetooth stopped still gets its banner. This core's Bluetooth controller
-// cannot sleep: while Bluetooth is on the board stays up (halo_stay_awake), as on USB. Settings -> Bluetooth turns it
+// cannot sleep: while Bluetooth is on the board stays up (oriole_stay_awake), as on USB. Settings -> Bluetooth turns it
 // off (the bt_on setting) and forgets the iPhone.
 // Included from Oriole.ino after power.h.
 #include "host/ble_hs.h"
@@ -120,7 +120,7 @@ static void an_store(const char *app_id, const char *title, const char *msg, con
     }
   }
   Notif &e = nt.e[nt.head];
-  e.uid = an_cur.uid, e.cat = an_cur.cat, e.epoch = halo_clock_valid() ? (uint32_t)time(nullptr) : 0;
+  e.uid = an_cur.uid, e.cat = an_cur.cat, e.epoch = oriole_clock_valid() ? (uint32_t)time(nullptr) : 0;
   strlcpy(e.app, app, sizeof(e.app)), strlcpy(e.title, title, NT_TITLE), strlcpy(e.msg, msg, NT_MSG);
   nt.head = (nt.head + 1) % NT_N;
   if (nt.count < NT_N) nt.count++;
@@ -151,7 +151,11 @@ static void an_data(const uint8_t *d, int n) {
   if (an_len + n > (int)sizeof(an_buf)) an_len = 0;  // nonsense: start over
   memcpy(an_buf + an_len, d, n), an_len += n;
   if (an_len < 5) return;
-  static char f[4][NT_MSG];  // the NimBLE task only
+  struct Fields {
+    char f[4][NT_MSG];
+  };
+  static Fields &ff = psram_new<Fields>();  // the NimBLE task only; in PSRAM
+  auto &f = ff.f;
   int pos = 5, got = 0;
   while (got < 4 && pos + 3 <= an_len) {
     const int len = an_buf[pos + 1] | an_buf[pos + 2] << 8;
@@ -166,8 +170,42 @@ static void an_data(const uint8_t *d, int n) {
   an_next();
 }
 
-static void an_next() {  // the next queued notification's attributes
-  if (an_busy || an_qh == an_qt || !an_cp || bt_conn == BLE_HS_CONN_HANDLE_NONE) return;
+// Cleared on the watch: also cleared on the iPhone (ANCS Perform Notification Action, Negative), or the iPhone sends
+// it again on the next connection (it sends its whole list then). One control point write at a time: an_next
+#define AN_DQ 24
+static uint32_t an_dq[AN_DQ];
+static volatile int an_dh, an_dt;
+static portMUX_TYPE an_mux = portMUX_INITIALIZER_UNLOCKED;  // an_next runs in NimBLE's task and in loop() (bt_poll)
+
+static void nt_clear(uint32_t uid, uint8_t cat) {  // the frame task: gone here at once, on the iPhone soon
+  nt_remove(uid);
+  if (cat == 1) return;  // an incoming call: Negative would decline it
+  const int nx = (an_dt + 1) % AN_DQ;
+  if (nx != an_dh) an_dq[an_dt] = uid, an_dt = nx;
+}
+
+static int an_acted(uint16_t, const ble_gatt_error *e, ble_gatt_attr *, void *) {
+  if (e->status) LOG("bluetooth: clear on the iPhone failed (%d)\n", e->status);
+  an_busy = false;
+  an_next();
+  return 0;
+}
+
+static void an_next() {  // a clear to send, or the next queued notification's attributes
+  if (!an_cp || bt_conn == BLE_HS_CONN_HANDLE_NONE) return;
+  portENTER_CRITICAL(&an_mux);
+  const bool go = !an_busy && (an_dh != an_dt || an_qh != an_qt);
+  if (go) an_busy = true;
+  portEXIT_CRITICAL(&an_mux);
+  if (!go) return;
+  an_busy_at = millis(), an_len = 0;
+  if (an_dh != an_dt) {
+    const uint32_t u = an_dq[an_dh];
+    an_dh = (an_dh + 1) % AN_DQ;
+    const uint8_t cmd[] = {2, (uint8_t)u, (uint8_t)(u >> 8), (uint8_t)(u >> 16), (uint8_t)(u >> 24), 1};
+    if (ble_gattc_write_flat(bt_conn, an_cp, cmd, sizeof(cmd), an_acted, nullptr)) an_busy = false;
+    return;
+  }
   an_cur = an_q[an_qh], an_qh = (an_qh + 1) % 24;
   const uint32_t u = an_cur.uid;
   const uint8_t cmd[] = {0,    (uint8_t)u, (uint8_t)(u >> 8), (uint8_t)(u >> 16), (uint8_t)(u >> 24),
@@ -175,7 +213,6 @@ static void an_next() {  // the next queued notification's attributes
                          1,    NT_TITLE - 4, 0,                     // Title, at most
                          3,    (uint8_t)(NT_MSG - 6), 0,            // Message, at most
                          5};                                        // Date
-  an_busy = true, an_busy_at = millis(), an_len = 0;
   if (ble_gattc_write_flat(bt_conn, an_cp, cmd, sizeof(cmd), nullptr, nullptr)) an_busy = false;
 }
 
@@ -379,17 +416,25 @@ static int64_t ct_days(int y, int m, int d) {  // days since 1970-01-01 (Howard 
   return (int64_t)era * 146097 + doe - 719468;
 }
 
-static int ct_got_time(uint16_t, const ble_gatt_error *e, ble_gatt_attr *a, void *) {
+static void bas_begin();
+
+// One read at a time: with the battery's read out together, NimBLE handed each answer to the other's callback (the
+// battery read the clock's 10 bytes: "234%", the year's low byte). So the battery comes after the clock, whatever it did
+static void ct_apply(const ble_gatt_error *e, ble_gatt_attr *a) {
   uint8_t b[10];
-  if (e->status || OS_MBUF_PKTLEN(a->om) < 7) return 0;
+  if (e->status || OS_MBUF_PKTLEN(a->om) < 7) return;
   os_mbuf_copydata(a->om, 0, 7, b);
   const int y = b[0] | b[1] << 8;
-  if (y < 2020 || ct_zone == -128 || ct_dst == 255) return LOG("bluetooth: the iPhone's time has no zone\n"), 0;
+  if (y < 2020 || ct_zone == -128 || ct_dst == 255) return (void)LOG("bluetooth: the iPhone's time has no zone\n");
   const int32_t off = (ct_zone + ct_dst) * 15 * 60;  // seconds east of UTC, DST included
   const int64_t local = ct_days(y, b[2], b[3]) * 86400 + b[4] * 3600 + b[5] * 60 + b[6];
   net_set_auto_offset(off, true);
   net_time_set((time_t)(local - off), "iPhone");
   LOG("bluetooth: time from the iPhone, UTC%+.2g h\n", off / 3600.0f);
+}
+static int ct_got_time(uint16_t, const ble_gatt_error *e, ble_gatt_attr *a, void *) {
+  ct_apply(e, a);
+  bas_begin();
   return 0;
 }
 
@@ -397,6 +442,7 @@ static int ct_got_info(uint16_t, const ble_gatt_error *e, ble_gatt_attr *a, void
   uint8_t b[2];
   if (!e->status && OS_MBUF_PKTLEN(a->om) >= 2) os_mbuf_copydata(a->om, 0, 2, b), ct_zone = (int8_t)b[0], ct_dst = b[1];
   if (ct_time) ble_gattc_read(bt_conn, ct_time, ct_got_time, nullptr);
+  else bas_begin();
   return 0;
 }
 
@@ -408,19 +454,118 @@ static int ct_chr(uint16_t, const ble_gatt_error *e, const ble_gatt_chr *c, void
   } else if (e->status == BLE_HS_EDONE) {
     if (ct_info) ble_gattc_read(bt_conn, ct_info, ct_got_info, nullptr);
     else if (ct_time) ble_gattc_read(bt_conn, ct_time, ct_got_time, nullptr);
+    else bas_begin();
   }
   return 0;
 }
 
 static int ct_svc(uint16_t, const ble_gatt_error *e, const ble_gatt_svc *s, void *) {
-  if (e->status == 0) ble_gattc_disc_all_chrs(bt_conn, s->start_handle, s->end_handle, ct_chr, nullptr);
+  static bool found;
+  if (e->status == 0) found = true, ble_gattc_disc_all_chrs(bt_conn, s->start_handle, s->end_handle, ct_chr, nullptr);
+  else if (!found) bas_begin();  // no clock service: the battery now
+  else found = false;
   return 0;
 }
 
 static void cts_begin() {
   static const ble_uuid16_t CTS = BLE_UUID16_INIT(0x1805);
   ct_time = ct_info = 0, ct_zone = -128, ct_dst = 255;
-  ble_gattc_disc_svc_by_uuid(bt_conn, &CTS.u, ct_svc, nullptr);
+  ble_gattc_disc_svc_by_uuid(bt_conn, &CTS.u, ct_svc, nullptr);  // then the battery (ct_got_time)
+}
+
+// ---------- The iPhone's battery (Battery Service 0x180F, level 0x2A19): read now and every 10 minutes ----------
+static uint16_t bas_level;
+static volatile int iph_batt = -1;  // %, −1 — not known (shown: Settings -> Bluetooth, Notifications, the Arcs face)
+static uint32_t bas_at;
+
+static int bas_got(uint16_t, const ble_gatt_error *e, ble_gatt_attr *a, void *) {
+  uint8_t v = 0;
+  const int n = e->status ? 0 : OS_MBUF_PKTLEN(a->om);
+  if (n >= 1) os_mbuf_copydata(a->om, 0, 1, &v);
+  LOG("bluetooth: iPhone battery %d%% (status %d, %d bytes)\n", v, e->status, n);
+  if (n == 1 && v <= 100) iph_batt = v;  // a level: one byte, 0..100 — anything else is not one
+  return 0;
+}
+
+static int bas_chr(uint16_t, const ble_gatt_error *e, const ble_gatt_chr *c, void *) {
+  if (e->status == 0 && ble_uuid_u16(&c->uuid.u) == 0x2A19) bas_level = c->val_handle;
+  else if (e->status == BLE_HS_EDONE && bas_level) ble_gattc_read(bt_conn, bas_level, bas_got, nullptr), bas_at = millis();
+  return 0;
+}
+
+static int bas_svc(uint16_t, const ble_gatt_error *e, const ble_gatt_svc *s, void *) {
+  if (e->status == 0) ble_gattc_disc_all_chrs(bt_conn, s->start_handle, s->end_handle, bas_chr, nullptr);
+  return 0;
+}
+
+static void bas_begin() {
+  static const ble_uuid16_t BAS = BLE_UUID16_INIT(0x180F);
+  bas_level = 0;
+  ble_gattc_disc_svc_by_uuid(bt_conn, &BAS.u, bas_svc, nullptr);
+}
+
+// ---------- The camera remote: a HID consumer control with one key, Volume Up (the iPhone's Camera shutter) ----------
+// A GATT server of our own: HID (0x1812) — its information, the report map, the control point, one input report
+// (1 byte: bit 0 Volume Up, bit 1 Volume Down) — and Device Information with a PnP ID. The iPhone subscribes to the
+// report once it knows the service (after an encrypted connection the watch tells it the services changed)
+static const uint8_t HID_MAP[] = {0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x01, 0x15, 0x00, 0x25, 0x01, 0x75,
+                                  0x01, 0x95, 0x02, 0x09, 0xE9, 0x09, 0xEA, 0x81, 0x02, 0x95, 0x06, 0x81, 0x03, 0xC0};
+static const uint8_t HID_INFO[] = {0x11, 0x01, 0x00, 0x02};   // HID 1.11, no country, normally connectable
+static const uint8_t HID_REF[] = {0x01, 0x01};                // report 1, input
+static const uint8_t PNP_ID[] = {0x02, 0x3A, 0x30, 0x01, 0x00, 0x01, 0x00};  // USB vendor 0x303A (Espressif)
+static uint8_t hid_report, hid_mode = 1;
+static uint16_t hid_report_h;
+static volatile bool hid_ready;  // the iPhone subscribed to the report: the shutter works
+
+static int hid_access(uint16_t, uint16_t, ble_gatt_access_ctxt *ctxt, void *arg) {
+  const uintptr_t what = (uintptr_t)arg;
+  auto put = [&](const void *d, size_t n) { return os_mbuf_append(ctxt->om, d, n) ? BLE_ATT_ERR_INSUFFICIENT_RES : 0; };
+  if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+    if (what == 5) os_mbuf_copydata(ctxt->om, 0, 1, &hid_mode);
+    return 0;  // the control point (suspend / exit suspend) and the protocol mode: taken as they come
+  }
+  switch (what) {
+    case 1: return put(HID_INFO, sizeof(HID_INFO));
+    case 2: return put(HID_MAP, sizeof(HID_MAP));
+    case 3: return put(&hid_report, 1);
+    case 4: return put(HID_REF, sizeof(HID_REF));
+    case 5: return put(&hid_mode, 1);
+    case 6: return put(PNP_ID, sizeof(PNP_ID));
+    case 7: return put("Oriole", 6);
+  }
+  return BLE_ATT_ERR_UNLIKELY;
+}
+
+static const ble_uuid16_t U_HID = BLE_UUID16_INIT(0x1812), U_INFO = BLE_UUID16_INIT(0x2A4A),
+                          U_MAP = BLE_UUID16_INIT(0x2A4B), U_CP = BLE_UUID16_INIT(0x2A4C),
+                          U_REP = BLE_UUID16_INIT(0x2A4D), U_MODE = BLE_UUID16_INIT(0x2A4E),
+                          U_REF = BLE_UUID16_INIT(0x2908), U_DIS = BLE_UUID16_INIT(0x180A),
+                          U_PNP = BLE_UUID16_INIT(0x2A50), U_MAKER = BLE_UUID16_INIT(0x2A29);
+static ble_gatt_dsc_def HID_REP_DSC[] = {{(const ble_uuid_t *)&U_REF, BLE_ATT_F_READ, 0, hid_access, (void *)4}, {}};
+static ble_gatt_chr_def HID_CHRS[] = {
+    {(const ble_uuid_t *)&U_INFO, hid_access, (void *)1, nullptr, BLE_GATT_CHR_F_READ},
+    {(const ble_uuid_t *)&U_MAP, hid_access, (void *)2, nullptr, BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC},
+    {(const ble_uuid_t *)&U_CP, hid_access, (void *)0, nullptr, BLE_GATT_CHR_F_WRITE_NO_RSP},
+    {(const ble_uuid_t *)&U_REP, hid_access, (void *)3, HID_REP_DSC,
+     BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ_ENC, 0, &hid_report_h},
+    {(const ble_uuid_t *)&U_MODE, hid_access, (void *)5, nullptr, BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE_NO_RSP},
+    {}};
+static ble_gatt_chr_def DIS_CHRS[] = {{(const ble_uuid_t *)&U_PNP, hid_access, (void *)6, nullptr, BLE_GATT_CHR_F_READ},
+                                      {(const ble_uuid_t *)&U_MAKER, hid_access, (void *)7, nullptr, BLE_GATT_CHR_F_READ},
+                                      {}};
+static const ble_gatt_svc_def GATT_SVCS[] = {
+    {BLE_GATT_SVC_TYPE_PRIMARY, (const ble_uuid_t *)&U_HID, nullptr, HID_CHRS},
+    {BLE_GATT_SVC_TYPE_PRIMARY, (const ble_uuid_t *)&U_DIS, nullptr, DIS_CHRS},
+    {}};
+
+static bool hid_press() {  // the Camera app's shutter: Volume Up down, then up 80 ms later (any task)
+  if (!hid_ready || bt_conn == BLE_HS_CONN_HANDLE_NONE) return false;
+  for (uint8_t v : {(uint8_t)1, (uint8_t)0}) {
+    hid_report = v;
+    ble_gatts_notify_custom(bt_conn, hid_report_h, ble_hs_mbuf_from_flat(&hid_report, 1));
+    if (v) delay(80);
+  }
+  return true;
 }
 
 // ---------- Connection ----------
@@ -441,14 +586,15 @@ static int bt_gap(ble_gap_event *ev, void *) {
     }
     case BLE_GAP_EVENT_DISCONNECT:
       LOG("bluetooth: disconnected (%d)\n", ev->disconnect.reason);
-      bt_conn = BLE_HS_CONN_HANDLE_NONE, an_busy = false, am_lost();
+      bt_conn = BLE_HS_CONN_HANDLE_NONE, an_busy = false, am_lost(), hid_ready = false, bas_level = 0;
       if (bt_state != BT_OFF && bt_state != BT_PAUSED) bt_advertise();  // not while it is being stopped
       break;
     case BLE_GAP_EVENT_ENC_CHANGE:
       if (ev->enc_change.status) return LOG("bluetooth: pairing failed (%d)\n", ev->enc_change.status), 0;
       bt_conn = ev->enc_change.conn_handle, bt_state = BT_SECURE;  // the handle from this event: it may come first
-      an_ns = an_cp = an_ds = an_ns_cccd = an_ds_cccd = 0, an_busy = false, an_qh = an_qt = 0;
+      an_ns = an_cp = an_ds = an_ns_cccd = an_ds_cccd = 0, an_busy = false, an_qh = an_qt = 0, an_dh = an_dt;  // UIDs are per connection: no clears carried over
       LOG("bluetooth: encrypted\n");
+      ble_svc_gatt_changed(0x0001, 0xFFFF);  // look at our services again: the camera remote may be new to it
       ble_gattc_disc_svc_by_uuid(bt_conn, &ANCS_SVC.u, an_svc, nullptr);
       break;
     case BLE_GAP_EVENT_REPEAT_PAIRING: {  // the iPhone forgot us and pairs again: drop the old bond
@@ -465,6 +611,12 @@ static int bt_gap(ble_gap_event *ev, void *) {
       else if (ev->notify_rx.attr_handle == am_eu) am_update(b, n);
       break;
     }
+    case BLE_GAP_EVENT_SUBSCRIBE:
+      if (ev->subscribe.attr_handle == hid_report_h) {
+        hid_ready = ev->subscribe.cur_notify;
+        LOG("bluetooth: camera remote %s\n", hid_ready ? "ready" : "off");
+      }
+      break;
     case BLE_GAP_EVENT_ADV_COMPLETE:
       if (bt_state == BT_ADV) bt_advertise();
       break;
@@ -505,6 +657,7 @@ static void bt_start() {  // the net task
   ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT, ble_hs_cfg.sm_bonding = 1, ble_hs_cfg.sm_sc = 1;
   ble_hs_cfg.sm_our_key_dist = ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
   ble_svc_gap_init(), ble_svc_gatt_init();
+  if (ble_gatts_count_cfg(GATT_SVCS) || ble_gatts_add_svcs(GATT_SVCS)) LOG("bluetooth: the camera remote failed\n");
   ble_svc_gap_device_name_set("Oriole");
   ble_svc_gap_device_appearance_set(0x00C0);
   ble_store_config_init();
@@ -522,8 +675,9 @@ static void bt_stop(uint8_t why) {  // the net task: everything freed (BT_PAUSED
   nimble_port_stop();
   nimble_port_deinit();
   bt_inited = false, bt_conn = BLE_HS_CONN_HANDLE_NONE, an_busy = false, bt_state = why;
+  hid_ready = false, bas_level = 0;
   am_lost();
-  if (halo_clock_valid()) {
+  if (oriole_clock_valid()) {
     const time_t t = time(nullptr);
     struct tm tm;
     localtime_r(&t, &tm);
@@ -535,7 +689,7 @@ static void bt_stop(uint8_t why) {  // the net task: everything freed (BT_PAUSED
 // From the net task, every round: Bluetooth runs when it is on in Settings and Wi-Fi is off
 static void bt_radio(bool wifi) {
   const bool want = cfg.bt_on && !wifi;
-  if (cfg.bt_on != bt_held) bt_held = cfg.bt_on, halo_stay_awake(bt_held);  // its controller cannot sleep
+  if (cfg.bt_on != bt_held) bt_held = cfg.bt_on, oriole_stay_awake(bt_held);  // its controller cannot sleep
   if (want && !bt_inited) bt_start();
   else if (!want && bt_inited) bt_stop(wifi ? BT_PAUSED : BT_OFF);
   else if (!want && bt_state != (wifi && cfg.bt_on ? BT_PAUSED : BT_OFF)) bt_state = wifi && cfg.bt_on ? BT_PAUSED : BT_OFF;
@@ -556,4 +710,7 @@ static void bt_forget() {  // the bond goes; the iPhone must forget "Oriole" too
 
 static void bt_poll() {  // from loop(): a request the phone never answered — give up on it, ask for the next
   if (an_busy && millis() - an_busy_at > 4000) an_busy = false, an_len = 0, an_next();
+  if (!an_busy && an_dh != an_dt) an_next();  // a clear from the watch
+  if (bas_level && bt_conn != BLE_HS_CONN_HANDLE_NONE && millis() - bas_at > 600000)  // the iPhone's battery again
+    bas_at = millis(), ble_gattc_read(bt_conn, bas_level, bas_got, nullptr);
 }

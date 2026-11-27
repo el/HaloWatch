@@ -46,7 +46,7 @@ static void status_cmd(const char *) {
   }
   j.put("]");
   // Battery and memory
-  const HaloBattery b = halo_battery();
+  const OrioleBattery b = oriole_battery();
   if (b.ok) {
     j.key("battery"), j.f("%d", b.percent), j.key("usb"), j.put(b.usb ? "true" : "false");
     j.key("charging"), j.put(b.charging ? "true" : "false");
@@ -59,16 +59,18 @@ static void status_cmd(const char *) {
 }
 
 static void cfg_changed(const char *name) {  // from loop(), right after `set` saved it
-  if (!strcmp(name, "volume")) halo_audio_volume(cfg.vol);
-  else if (!strcmp(name, "mic_gain")) halo_mic_gain(cfg.gain);
-  else if (!strcmp(name, "mic_channel")) halo_mic_channel(cfg.mic_ch);
+  if (!strcmp(name, "volume")) oriole_audio_volume(cfg.vol);
+  else if (!strcmp(name, "mic_gain")) oriole_mic_gain(cfg.gain);
+  else if (!strcmp(name, "mic_channel")) oriole_mic_channel(cfg.mic_ch);
   else if (!strcmp(name, "tz")) net_apply_tz();
   else if (!strncmp(name, "wx_", 3)) wx_cmd_update = true, xTaskNotifyGive(wx_task_h);
   else if (!strcmp(name, "bt_on")) bt_apply();
+  else if (!strcmp(name, "cal_url")) wx_cmd_update = true, xTaskNotifyGive(wx_task_h);  // read the new calendar
+  else if (!strncmp(name, "ha_", 3)) home_refresh();
   else if (!strncmp(name, "wifi_", 5)) net_reconnect = true, net_poke();  // try the new network now
   else if (!strncmp(name, "ai_", 3) && strcmp(name, "ai_keep")) ai_cmd_close = true;  // the next session uses it
 }
 
 static void status_begin() {
-  halo_command("status", status_cmd);
+  oriole_command("status", status_cmd);
 }

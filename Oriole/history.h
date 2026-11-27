@@ -38,7 +38,7 @@ static void hist_push(const char *q, const char *a) {
   if (!*a) return;
   portENTER_CRITICAL(&hist_mux);
   HistEntry &e = hist.e[hist.head];
-  e.epoch = halo_clock_valid() ? (uint32_t)time(nullptr) : 0;
+  e.epoch = oriole_clock_valid() ? (uint32_t)time(nullptr) : 0;
   strlcpy(e.q, *q ? q : "(no transcript)", HIST_Q), strlcpy(e.a, a, HIST_A);
   hist.head = (hist.head + 1) % HIST_N;
   if (hist.count < HIST_N) hist.count++;

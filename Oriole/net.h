@@ -2,7 +2,7 @@
 //
 // Wi-Fi is on only while something needs it: the assistant's session, a weather update, a time sync — and for
 // net_idle seconds after the last use (default 60), then the radio goes off. While it is on, the board does not really
-// sleep (halo_stay_awake: in light sleep the access point would drop us); Always On still dims the screen as usual.
+// sleep (oriole_stay_awake: in light sleep the access point would drop us); Always On still dims the screen as usual.
 // Users: net_acquire() (blocks until connected or failed; not from the frame task) and net_release(); net_poke()
 // starts connecting without waiting (the frame task, when BOOT is pressed: the radio is warming up while you talk).
 //
@@ -95,7 +95,7 @@ static SemaphoreHandle_t net_tls_mx;  // one TLS connection at a time (a binary 
 
 static void bt_radio(bool wifi);  // ancs.h: Bluetooth gets the radio (and its 72 KB) back whenever Wi-Fi is off
 
-static bool halo_clock_valid() {
+static bool oriole_clock_valid() {
   return net_time_ok;
 }
 
@@ -170,7 +170,7 @@ static void net_task(void *) {
           net_state = NET_NO_SSID;
           break;
         }
-        if (!held) halo_stay_awake(true), held = true;
+        if (!held) oriole_stay_awake(true), held = true;
         bt_radio(true);  // Bluetooth stops first: the two do not fit in internal RAM together
         WiFi.mode(WIFI_STA);
         int pick = 0;  // several networks: a quick scan (~1.3 s), the strongest one in range; one — straight to it
@@ -220,7 +220,7 @@ static void net_task(void *) {
         break;
     }
     const bool radio_off = net_state == NET_OFF || net_state == NET_NO_SSID || net_state == NET_FAILED;
-    if (held && radio_off) halo_stay_awake(false), held = false;
+    if (held && radio_off) oriole_stay_awake(false), held = false;
     bt_radio(!radio_off);  // Wi-Fi off: Bluetooth back (if it is on in Settings)
   }
 }
@@ -280,6 +280,89 @@ static int net_get(const char *url, char *buf, int cap) {
   return n;
 }
 
+// HTTP(S) with a bearer token and a JSON body (Home Assistant, apps): the status (−1 — no answer); the reply into buf
+// (NUL-terminated) if buf. With the network acquired; not from the frame task
+static int net_request(bool post, const char *url, const char *bearer, const char *body, char *buf, int cap) {
+  xSemaphoreTake(net_tls_mx, portMAX_DELAY);
+  esp_http_client_config_t c = {};
+  c.url = url, c.timeout_ms = 8000, c.crt_bundle_attach = esp_crt_bundle_attach, c.buffer_size = 2048;
+  c.method = post ? HTTP_METHOD_POST : HTTP_METHOD_GET;
+  esp_http_client_handle_t h = esp_http_client_init(&c);
+  int st = -1;
+  if (h) {
+    static char auth[320];  // this task holds net_tls_mx: one at a time
+    if (bearer && *bearer) snprintf(auth, sizeof(auth), "Bearer %s", bearer), esp_http_client_set_header(h, "Authorization", auth);
+    const int bl = body ? strlen(body) : 0;
+    if (body) esp_http_client_set_header(h, "Content-Type", "application/json");
+    if (esp_http_client_open(h, bl) == ESP_OK && (!bl || esp_http_client_write(h, body, bl) == bl)) {
+      esp_http_client_fetch_headers(h);
+      st = esp_http_client_get_status_code(h);
+      int got = 0, r;
+      while (buf && got < cap - 1 && (r = esp_http_client_read(h, buf + got, cap - 1 - got)) > 0) got += r;
+      if (buf) buf[got] = 0;
+    } else {
+      LOG("http: could not open %.60s\n", url);
+    }
+    esp_http_client_cleanup(h);
+  }
+  xSemaphoreGive(net_tls_mx);
+  return st;
+}
+
+// A text file line by line (the calendar: it can be megabytes — never held whole): CRLF or LF, and folded lines (a
+// line that starts with a space continues the one before) joined. Redirects followed. false — it could not be read
+static bool net_lines(const char *url, void (*line)(char *)) {
+  xSemaphoreTake(net_tls_mx, portMAX_DELAY);
+  esp_http_client_config_t c = {};
+  c.url = url, c.timeout_ms = 10000, c.crt_bundle_attach = esp_crt_bundle_attach, c.buffer_size = 2048;
+  esp_http_client_handle_t h = esp_http_client_init(&c);
+  bool ok = false;
+  for (int hop = 0; h && hop < 4; hop++) {
+    if (esp_http_client_open(h, 0) != ESP_OK) break;
+    esp_http_client_fetch_headers(h);
+    const int st = esp_http_client_get_status_code(h);
+    if (st >= 300 && st < 400) {  // moved: again from the new address
+      esp_http_client_set_redirection(h), esp_http_client_close(h);
+      continue;
+    }
+    if (st != 200) {
+      LOG("http: %d from %.60s\n", st, url);
+      break;
+    }
+    struct Bufs {
+      char chunk[1024], cur[1024], ln[1024];
+    };
+    static Bufs &b = psram_new<Bufs>();  // one download at a time (net_tls_mx); in PSRAM
+    char *chunk = b.chunk, *cur = b.cur, *ln = b.ln;
+    int cl = 0, n = 0;
+    bool have = false;
+    for (int r; (r = esp_http_client_read(h, chunk, 1024)) > 0;) {
+      for (int i = 0; i < r; i++) {  // sizes: the three buffers are 1024
+        const char ch = chunk[i];
+        if (ch == '\r') continue;
+        if (ch != '\n') {
+          if (n < 1023) ln[n++] = ch;
+          continue;
+        }
+        ln[n] = 0;
+        if ((ln[0] == ' ' || ln[0] == '\t') && have) {  // folded: onto the line before
+          strlcpy(cur + cl, ln + 1, 1024 - cl), cl = strlen(cur);
+        } else {
+          if (have) line(cur);
+          strlcpy(cur, ln, 1024), cl = strlen(cur), have = true;
+        }
+        n = 0;
+      }
+    }
+    if (have) line(cur);
+    ok = true;
+    break;
+  }
+  if (h) esp_http_client_cleanup(h);
+  xSemaphoreGive(net_tls_mx);
+  return ok;
+}
+
 static void net_scan_cmd() {  // SCAN [{"ssid":…,"rssi":…,"open":…}, …] — for the controller's list
   if (net_state == NET_OFF) WiFi.mode(WIFI_STA);
   const int n = WiFi.scanNetworks();
@@ -300,12 +383,12 @@ static void net_begin() {
   mbedtls_platform_set_calloc_free(net_tls_calloc, heap_caps_free);  // before any connection is opened
   // A binary semaphore, not a mutex: the assistant holds it for a whole session, and a FreeRTOS task gives back an
   // inherited priority only once it holds no mutex — it kept the Wi-Fi task's 23 for the session and starved the
-  // speaker (halo_audio, 5): the reply crackled
+  // speaker (oriole_audio, 5): the reply crackled
   net_tls_mx = xSemaphoreCreateBinary();
   xSemaphoreGive(net_tls_mx);
   net_apply_tz();
   xTaskCreatePinnedToCore(net_task, "net", 6144, nullptr, 3, &net_task_h, 0);  // 6 KB: it starts Bluetooth too
-  halo_command("time", [](const char *a) {  // time EPOCH [OFFSET_MIN] — from the web controller
+  oriole_command("time", [](const char *a) {  // time EPOCH [OFFSET_MIN] — from the web controller
     const long long t = atoll(a);
     if (t < 1700000000) return (void)Serial.println("ERR time bad epoch");
     const char *sp = strchr(a, ' ');
@@ -313,7 +396,7 @@ static void net_begin() {
     net_time_set((time_t)t, "USB");
     Serial.println("OK time");
   });
-  halo_command("wifi", [](const char *a) {  // wifi scan | on | off
+  oriole_command("wifi", [](const char *a) {  // wifi scan | on | off
     if (!strcmp(a, "scan")) net_scan_cmd();
     else if (!strcmp(a, "on")) net_poke(), Serial.println("OK wifi");
     else if (!strcmp(a, "off")) net_last_ms = millis() - 3600000u, net_poked = false, xTaskNotifyGive(net_task_h), Serial.println("OK wifi");

@@ -123,7 +123,7 @@ static void ai_fail(const char *fmt, ...) {
   LOG("assistant: %s\n", ai_error);
 }
 
-// The speaker (Halo's audio task): the reply, once ai_prebuf is buffered or the turn is over. ai_prebuf starts at
+// The speaker (Oriole's audio task): the reply, once ai_prebuf is buffered or the turn is over. ai_prebuf starts at
 // 200 ms and doubles (to 4 s) each time the reply runs dry mid-turn: on a slow link, a few short gaps, not a stutter
 static volatile uint32_t ai_prebuf = AI_PREBUF;
 static volatile uint32_t ai_gaps;  // the reply ran dry mid-turn (a gap is a click)
@@ -137,7 +137,7 @@ static int ai_chime(int16_t *out, int n) {  // two short 880 Hz beeps a second, 
   if (ai_chime_mode == 2) {  // a tone at ai_tone_hz until ai_chime_until, its start softened
     for (int i = 0; i < n; i++, pos++) {
       const float env = fminf(1, pos / 150.0f);
-      out[i] = (int16_t)(7000 * env * sinf(2 * HALO_PI * ai_tone_hz * (pos % AI_RATE) / AI_RATE));
+      out[i] = (int16_t)(7000 * env * sinf(2 * ORIOLE_PI * ai_tone_hz * (pos % AI_RATE) / AI_RATE));
     }
     return n;
   }
@@ -148,7 +148,7 @@ static int ai_chime(int16_t *out, int n) {  // two short 880 Hz beeps a second, 
       const uint32_t in = second ? t - gap : t;
       const float f = t < len ? 1320 : second ? 1760 : 0;
       const float env = f ? fminf(1, fminf(in, len - in) / 100.0f) : 0;
-      out[i] = (int16_t)(6000 * env * sinf(2 * HALO_PI * f * in / AI_RATE));
+      out[i] = (int16_t)(6000 * env * sinf(2 * ORIOLE_PI * f * in / AI_RATE));
     }
     return n;
   }
@@ -157,7 +157,7 @@ static int ai_chime(int16_t *out, int n) {  // two short 880 Hz beeps a second, 
     const bool on = t < AI_RATE * 15 / 100 || (t >= AI_RATE / 4 && t < AI_RATE * 40 / 100);
     const uint32_t in = t < AI_RATE / 4 ? t : t - AI_RATE / 4, len = AI_RATE * 15 / 100;
     const float env = on ? fminf(1, fminf(in, len - in) / 120.0f) : 0;
-    out[i] = (int16_t)(9000 * env * sinf(2 * HALO_PI * 880 * t / AI_RATE));  // whole cycles a second: t is enough
+    out[i] = (int16_t)(9000 * env * sinf(2 * ORIOLE_PI * 880 * t / AI_RATE));  // whole cycles a second: t is enough
   }
   return n;
 }
@@ -181,7 +181,7 @@ static int ai_fill(int16_t *out, int n) {
   return k;
 }
 
-// The microphone (Halo's mic task): DC blocked, into `cap` while capturing
+// The microphone (Oriole's mic task): DC blocked, into `cap` while capturing
 static void ai_mic(const int16_t *b, int n) {
   static float x1, y1;
   int16_t t[256];
@@ -435,7 +435,7 @@ static void ai_setup_json(JBuf &j, bool resume) {
     search = cfg.search, auto_vad = cfg.auto_vad;
   }
   // What the watch knows: the local time and the user's city (the first weather city)
-  if (halo_clock_valid()) {
+  if (oriole_clock_valid()) {
     const time_t now = time(nullptr);
     struct tm tm;
     localtime_r(&now, &tm);
@@ -536,12 +536,12 @@ static bool ai_send_text(const char *text, bool manual) {
 static void ai_mic_test() {  // 3 s from the mic, then played back; the level in the log
   LOG("mic test: speak now (3 s)\n");
   cap.r = cap.w;
-  if (!halo_mic_on(ai_mic)) return ai_fail("No microphone (ES7210)");
+  if (!oriole_mic_on(ai_mic)) return ai_fail("No microphone (ES7210)");
   ai_capture = true;
   float peak = 0;
   for (uint32_t t0 = millis(); millis() - t0 < 3000;) vTaskDelay(pdMS_TO_TICKS(20)), peak = fmaxf(peak, ai_in_level);
   ai_capture = false;
-  halo_mic_off();
+  oriole_mic_off();
   int16_t *tmp = ai_mem->chunk;
   int64_t e = 0, n = 0;
   int pk = 0;
@@ -561,16 +561,16 @@ static void ai_mic_test() {  // 3 s from the mic, then played back; the level in
 }
 
 static void ai_task(void *) {
-  halo_audio_begin(ai_fill, AI_RATE);
-  halo_audio_volume(cfg.vol);
-  halo_mic_gain(cfg.gain), halo_mic_channel(cfg.mic_ch);
+  oriole_audio_begin(ai_fill, AI_RATE);
+  oriole_audio_volume(cfg.vol);
+  oriole_mic_gain(cfg.gain), oriole_mic_channel(cfg.mic_ch);
   bool conn = false, in_turn = false;
   uint32_t think_ms = 0;
   int16_t *chunk = ai_mem->chunk;
   uint8_t logged_state = ai_state;
   for (;;) {
     if (ai_state != logged_state) logged_state = ai_state, LOG("assistant: %s (speaker buffer %lu ms, gaps %lu, underruns %lu)\n", AI_NAME[ai_state],
-          (unsigned long)(ai_prebuf * 1000 / AI_RATE), (unsigned long)ai_gaps, (unsigned long)halo_audio_underruns());
+          (unsigned long)(ai_prebuf * 1000 / AI_RATE), (unsigned long)ai_gaps, (unsigned long)oriole_audio_underruns());
     const bool manual = !cfg.auto_vad;
     // A short tap of BOOT: not a question
     if (ai_press_new && !ai_hold && ai_short) ai_press_new = false, cap.r = cap.w;
@@ -672,17 +672,17 @@ static void ai_begin() {
   if (!cap.b || !play.b || !ws_sbuf || !ws_rbuf || !ai_mem) return (void)LOG("assistant: NO MEMORY\n");
   // Its stack in PSRAM (it never writes flash, the only thing a PSRAM stack must not do): internal RAM is short
   xTaskCreatePinnedToCoreWithCaps(ai_task, "assistant", 10240, nullptr, 4, &ai_task_h, 0, MALLOC_CAP_SPIRAM);
-  halo_command("ai", [](const char *a) {
+  oriole_command("ai", [](const char *a) {
     if (!strcmp(a, "close")) ai_cmd_close = true;
     LOG("assistant: %s%s%s\n", AI_NAME[ai_state], ai_state == AI_ERROR ? " — " : "", ai_state == AI_ERROR ? ai_error : "");
   });
-  halo_command("ask", [](const char *a) {
+  oriole_command("ask", [](const char *a) {
     if (!*a) return (void)Serial.println("ERR ask usage: ask TEXT");
     strlcpy(ai_ask, a, sizeof(ai_ask)), ai_ask_new = true;
     xTaskNotifyGive(ai_task_h);
     Serial.println("OK ask");
   });
-  halo_command("mic", [](const char *a) {
+  oriole_command("mic", [](const char *a) {
     if (strcmp(a, "test")) return (void)Serial.println("ERR mic usage: mic test");
     ai_cmd_mictest = true;
     xTaskNotifyGive(ai_task_h);

@@ -10,7 +10,7 @@
 Всё настраивается **с веб-страницы по USB** в Chrome: Wi-Fi, ключ API, голос и подсказка ассистента, города погоды,
 часы, плюс журнал в реальном времени. Без приложения и без пересборки.
 
-Работает на **Halo** — небольшой библиотеке интерфейса, написанной с нуля для этой платы: свой драйвер экрана, свой
+Работает на **Oriole** — небольшой библиотеке интерфейса, написанной с нуля для этой платы: свой драйвер экрана, свой
 драйвер тача, своё рисование. Без LVGL и Arduino_GFX. Анимации идут на **60 кадрах в секунду без пропусков и без
 разрывов картинки**, а когда ничего не движется, кадры не рисуются вовсе. Если часы не трогать, они гаснут до
 тусклых часов **Always On** и спят, пока их не коснутся, не нажмут кнопку или не возьмут в руки.
@@ -140,7 +140,7 @@ microSD тоже нет.
   `esp_tls`): микрофоны уходят как 16-битный PCM 24 кГц, по 100 мс в сообщении, пока зажата BOOT («нажми и говори»:
   `activityStart` / `activityEnd`); ответ голосом приходит как PCM 24 кГц и играет по мере прихода, после 200 мс
   запаса. Оба направления идут через кольцевые буферы по 1 МБ в PSRAM — медленная сеть или долгое подключение не
-  теряют сказанного. Динамик и микрофоны — на одной шине I2S в обе стороны (`halo_mic_*` в Halo).
+  теряют сказанного. Динамик и микрофоны — на одной шине I2S в обе стороны (`oriole_mic_*` в Oriole).
 - **Пружины как в Wear OS.** Жёсткость, затухание, длительности и то, как уменьшаются карточки у края, — из открытого
   кода Compose для Wear OS. Пружина считается точной формулой, поэтому отскок одинаковый при любой частоте кадров.
 
@@ -206,8 +206,8 @@ arduino-cli compile --upload -p /dev/cu.usbmodem101 --libraries libraries --fqbn
 
 Других библиотек не нужно: Wi-Fi, TLS и WebSocket — из ядра ESP32 (ESP-IDF).
 
-Шрифты, значки и картинки уже собраны в `Oriole/src/halo_assets.*`. Чтобы их поменять, правьте
-`Oriole/assets/halo.conf` и запустите `python3 tools/halo_assets.py Oriole` (нужно `pip install numpy pillow`;
+Шрифты, значки и картинки уже собраны в `Oriole/src/oriole_assets.*`. Чтобы их поменять, правьте
+`Oriole/assets/oriole.conf` и запустите `python3 tools/oriole_assets.py Oriole` (нужно `pip install numpy pillow`;
 шрифты скачаются из своих репозиториев при первом запуске).
 
 ### Команды по USB
@@ -240,15 +240,15 @@ arduino-cli compile --upload -p /dev/cu.usbmodem101 --libraries libraries --fqbn
 | Папка | Что там |
 | --- | --- |
 | `Oriole/` | Прошивка: `Oriole.ino` (галерея), `gemini.h` (клиент Gemini Live), `assistant.h` (экран Assistant, «нажми и говори»), `net.h` (Wi-Fi, время, HTTPS), `config.h` (настройки, протокол по USB), `status.h`, `face.h`, `weather.h` (экран и Open-Meteo), `settings.h`, `display.h`, `battery.h`, `power.h` (Always On и сон); `assets/` — исходники шрифтов и значков |
-| `libraries/Halo/` | Библиотека Halo: драйверы экрана и тача, движок кадров, рисование, пружины, ленты, переходы экранов, звук (динамик и микрофоны), сон и пробуждение |
+| `libraries/Oriole/` | Библиотека Oriole: драйверы экрана и тача, движок кадров, рисование, пружины, ленты, переходы экранов, звук (динамик и микрофоны), сон и пробуждение |
 | `docs/controller/` | Веб-пульт: один HTML-файл без зависимостей (Web Serial) |
-| `tools/` | `halo_assets.py` — шрифты, значки и картинки для Halo |
+| `tools/` | `oriole_assets.py` — шрифты, значки и картинки для Oriole |
 
 ## Версии
 
 | Версия | Что нового |
 | --- | --- |
-| 1.2 | Голосовой ассистент (Gemini Live, зажать BOOT и говорить), веб-пульт по USB, Wi-Fi, время из интернета, настоящая погода (Open-Meteo), микрофоны в Halo; плеер и демо-экраны убраны |
+| 1.2 | Голосовой ассистент (Gemini Live, зажать BOOT и говорить), веб-пульт по USB, Wi-Fi, время из интернета, настоящая погода (Open-Meteo), микрофоны в Oriole; плеер и демо-экраны убраны |
 | [1.1](../../releases/tag/v1.1) | Always On и сон (будят касание, BOOT или подъём часов), ровнее движение, плавнее ведение пальцем, BOOT усыпляет плату |
 | [1.0](../../releases/tag/v1.0) | Первый релиз |
 
@@ -276,10 +276,10 @@ arduino-cli compile --upload -p /dev/cu.usbmodem101 --libraries libraries --fqbn
 
 | Что | Автор | Лицензия |
 | --- | --- | --- |
-| Шрифт Google Sans Flex (буквы в `Oriole/src/halo_assets.cpp`) | Google | [SIL OFL 1.1](https://openfontlicense.org) |
-| Значки Font Awesome Free (в `Oriole/src/halo_assets.cpp`) | Fonticons, Inc. | значки — [CC BY 4.0](https://fontawesome.com/license/free) |
-| Последовательность регистров кодека ES8311 (`libraries/Halo/src/halo_audio.cpp`) | по драйверу es8311 от Espressif | Apache 2.0 |
-| Последовательность регистров АЦП микрофонов ES7210 (`libraries/Halo/src/halo_audio.cpp`) | по [примеру es7210 от Waveshare](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) для этой платы | Apache 2.0 |
+| Шрифт Google Sans Flex (буквы в `Oriole/src/oriole_assets.cpp`) | Google | [SIL OFL 1.1](https://openfontlicense.org) |
+| Значки Font Awesome Free (в `Oriole/src/oriole_assets.cpp`) | Fonticons, Inc. | значки — [CC BY 4.0](https://fontawesome.com/license/free) |
+| Последовательность регистров кодека ES8311 (`libraries/Oriole/src/oriole_audio.cpp`) | по драйверу es8311 от Espressif | Apache 2.0 |
+| Последовательность регистров АЦП микрофонов ES7210 (`libraries/Oriole/src/oriole_audio.cpp`) | по [примеру es7210 от Waveshare](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) для этой платы | Apache 2.0 |
 | Пины платы и запуск экрана | по [примерам Waveshare](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) | Apache 2.0 |
 | Картинка платы (`docs/board.webp`) | Waveshare, со [страницы товара](https://www.waveshare.com/esp32-s3-touch-amoled-1.75c.htm) | только чтобы показать плату |
 

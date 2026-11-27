@@ -10,7 +10,7 @@ microphones, battery) with a **voice assistant**: hold BOOT, ask, let go, and th
 Everything is set up from a **web page over USB** in Chrome: Wi-Fi, the API key, the voice and the prompt, the weather
 cities, the clock, plus a live log. No app, no rebuild.
 
-It runs on **Halo**, a small UI library written from scratch for this board: its own display driver, its own touch
+It runs on **Oriole**, a small UI library written from scratch for this board: its own display driver, its own touch
 driver, its own drawing. No LVGL, no Arduino_GFX. Animations run at **60 fps with no dropped frames and no tearing**,
 and when nothing moves, no frames are drawn at all. Left alone, it dims to an **Always On** clock and sleeps until you
 touch it, press a button or pick it up.
@@ -141,7 +141,7 @@ internet (SNTP) or from the web controller. There is no microSD slot either.
   `esp_tls`): the microphones go out as 16-bit PCM at 24 kHz, 100 ms per message, while BOOT is held (push-to-talk:
   `activityStart` / `activityEnd`); the spoken answer comes back as 24 kHz PCM and plays as it arrives, after 200 ms of
   buffer. Both directions go through 1 MB rings in PSRAM, so a slow network or a slow start never drops what you said.
-  Speaker and microphones share one I2S bus in full duplex (`halo_mic_*` in Halo).
+  Speaker and microphones share one I2S bus in full duplex (`oriole_mic_*` in Oriole).
 - **Springs, as in Wear OS.** Stiffness, damping, durations and how cards shrink at the edge come from the open
   source code of Compose for Wear OS. A spring is solved exactly, so a bounce looks the same at any frame rate.
 
@@ -207,8 +207,8 @@ arduino-cli compile --upload -p /dev/cu.usbmodem101 --libraries libraries --fqbn
 
 No other libraries are needed: Wi-Fi, TLS and the WebSocket come from the ESP32 core (ESP-IDF).
 
-Fonts, icons and images are already built into `Oriole/src/halo_assets.*`. To change them, edit
-`Oriole/assets/halo.conf` and run `python3 tools/halo_assets.py Oriole` (needs `pip install numpy pillow`; the
+Fonts, icons and images are already built into `Oriole/src/oriole_assets.*`. To change them, edit
+`Oriole/assets/oriole.conf` and run `python3 tools/oriole_assets.py Oriole` (needs `pip install numpy pillow`; the
 fonts are downloaded from their original repositories on first run).
 
 ### USB commands
@@ -241,15 +241,15 @@ the assistant is busy). `usb on` makes it sleep on USB too — then wake it by h
 | Folder | What's inside |
 | --- | --- |
 | `Oriole/` | The firmware: `Oriole.ino` (gallery), `gemini.h` (Gemini Live client), `assistant.h` (Assistant screen, push-to-talk), `net.h` (Wi-Fi, time, HTTPS), `config.h` (settings, serial protocol), `status.h`, `face.h`, `weather.h` (screen and Open-Meteo), `settings.h`, `display.h`, `battery.h`, `power.h` (Always On and sleep); `assets/` — fonts and icons sources |
-| `libraries/Halo/` | The Halo library: display and touch drivers, frame engine, drawing, springs, lists, screen transitions, audio (speaker and microphones), sleep and wake-up |
+| `libraries/Oriole/` | The Oriole library: display and touch drivers, frame engine, drawing, springs, lists, screen transitions, audio (speaker and microphones), sleep and wake-up |
 | `docs/controller/` | The web controller: one HTML file, no dependencies (Web Serial) |
-| `tools/` | `halo_assets.py` — fonts, icons and images for Halo |
+| `tools/` | `oriole_assets.py` — fonts, icons and images for Oriole |
 
 ## Versions
 
 | Version | What's new |
 | --- | --- |
-| 1.2 | Voice assistant (Gemini Live, hold BOOT to talk), the web controller over USB, Wi-Fi, time from the internet, real weather (Open-Meteo), microphones in Halo; the music player and demo screens removed |
+| 1.2 | Voice assistant (Gemini Live, hold BOOT to talk), the web controller over USB, Wi-Fi, time from the internet, real weather (Open-Meteo), microphones in Oriole; the music player and demo screens removed |
 | [1.1](../../releases/tag/v1.1) | Always On and sleep (wake by touch, BOOT or picking the watch up), steadier motion, smoother dragging, BOOT puts the board to sleep |
 | [1.0](../../releases/tag/v1.0) | First release |
 
@@ -278,10 +278,10 @@ Third-party parts included in this repository:
 
 | What | Author | License |
 | --- | --- | --- |
-| Google Sans Flex font (glyphs rendered into `Oriole/src/halo_assets.cpp`) | Google | [SIL OFL 1.1](https://openfontlicense.org) |
-| Font Awesome Free icons (rendered into `Oriole/src/halo_assets.cpp`) | Fonticons, Inc. | icons [CC BY 4.0](https://fontawesome.com/license/free) |
-| ES8311 codec register sequence (`libraries/Halo/src/halo_audio.cpp`) | based on Espressif's es8311 driver | Apache 2.0 |
-| ES7210 microphone ADC register sequence (`libraries/Halo/src/halo_audio.cpp`) | based on [Waveshare's es7210 example](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) for this board | Apache 2.0 |
+| Google Sans Flex font (glyphs rendered into `Oriole/src/oriole_assets.cpp`) | Google | [SIL OFL 1.1](https://openfontlicense.org) |
+| Font Awesome Free icons (rendered into `Oriole/src/oriole_assets.cpp`) | Fonticons, Inc. | icons [CC BY 4.0](https://fontawesome.com/license/free) |
+| ES8311 codec register sequence (`libraries/Oriole/src/oriole_audio.cpp`) | based on Espressif's es8311 driver | Apache 2.0 |
+| ES7210 microphone ADC register sequence (`libraries/Oriole/src/oriole_audio.cpp`) | based on [Waveshare's es7210 example](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) for this board | Apache 2.0 |
 | Board pins and display start-up sequence | based on [Waveshare examples](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) | Apache 2.0 |
 | Board picture (`docs/board.webp`) | Waveshare, from the [product page](https://www.waveshare.com/esp32-s3-touch-amoled-1.75c.htm) | shown only to identify the board |
 

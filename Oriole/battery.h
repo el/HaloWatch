@@ -1,6 +1,6 @@
 // battery.h — the "Battery" screen (Settings -> Battery) and the battery's history.
 //
-// The power chip (AXP2101, halo_battery(): every 2 s) knows whether a battery is there, USB or not, charging or not,
+// The power chip (AXP2101, oriole_battery(): every 2 s) knows whether a battery is there, USB or not, charging or not,
 // the percent (its fuel gauge) and the voltage. On screen: a battery drawn in shapes, filled to the level (a bolt over
 // it on USB), the percent next to it, the status ("Charging", "Fully charged", "On battery for 3 h 20 min") and what was
 // used since unplugging; below — the level over the last 24 hours, like the iPhone's "Battery level": a bar per
@@ -34,7 +34,7 @@ static void battery_read() {
 static void battery_load() {
   bh_prefs.begin("battery", false);
   battery_read();
-  halo_command("batdemo", [](const char *) { bh_cmd_demo = true; });
+  oriole_command("batdemo", [](const char *) { bh_cmd_demo = true; });
 }
 
 // A made-up day like the iPhone's chart: down overnight, charged in the morning, down through the day, a short top-up
@@ -56,8 +56,8 @@ static void battery_poll() {
   static uint32_t at;
   if (millis() - at < 5000) return;
   at = millis();
-  const HaloBattery b = halo_battery();
-  if (!b.ok || !b.present || b.percent < 0 || !halo_clock_valid() || bh_demo) return;
+  const OrioleBattery b = oriole_battery();
+  if (!b.ok || !b.present || b.percent < 0 || !oriole_clock_valid() || bh_demo) return;
   const uint32_t now = time(nullptr), slot = now / BH_SLOT;
   bool save = false;
   if (slot != bh.last) {
@@ -102,29 +102,29 @@ static void battery_poll() {
 #define BT_RUNS 8          // shaded runs at most
 #define BT_MARKS 5         // hour marks at most
 static uint32_t bt_enter_ms;
-static HaloEase EASE_EMPH;
+static OrioleEase EASE_EMPH;
 static char bt_pct[8], bt_status[40], bt_detail[48];
 static float bt_mid_head, bt_mid_t20, bt_mid_pct, bt_mid_icon, bt_mid_bolt;
-static HaloItem bt_head, bt_out, bt_in, bt_fill, bt_nub, bt_bolt, bt_pct_t, bt_status_t, bt_detail_t, bt_cap;
-static HaloItem bt_grid[3], bt_ylab[3], bt_shade[BT_RUNS], bt_strip[BT_RUNS], bt_sbolt_bg, bt_sbolt;
+static OrioleItem bt_head, bt_out, bt_in, bt_fill, bt_nub, bt_bolt, bt_pct_t, bt_status_t, bt_detail_t, bt_cap;
+static OrioleItem bt_grid[3], bt_ylab[3], bt_shade[BT_RUNS], bt_strip[BT_RUNS], bt_sbolt_bg, bt_sbolt;
 struct BtBars {
-  HaloItem it[BH_N];
+  OrioleItem it[BH_N];
 };
-static HaloItem (&bt_bar)[BH_N] = psram_new<BtBars>().it;  // in PSRAM: internal RAM is for Wi-Fi and Bluetooth
-static HaloItem bt_vline[BT_MARKS], bt_hour[BT_MARKS], bt_empty;
+static OrioleItem (&bt_bar)[BH_N] = psram_new<BtBars>().it;  // in PSRAM: internal RAM is for Wi-Fi and Bluetooth
+static OrioleItem bt_vline[BT_MARKS], bt_hour[BT_MARKS], bt_empty;
 static const char *const BT_YLAB[3] = {"100%", "50%", "0%"};
 
 static void battery_build() {
-  bt_mid_head = halo_text_mid(t_title, "Battery");
-  bt_mid_t20 = halo_text_mid(t20, "On battery");
-  bt_mid_pct = halo_text_mid(n48, "0123456789");
-  bt_mid_icon = halo_text_mid(ic24, "");
-  bt_mid_bolt = halo_text_mid(ic18, "");
-  halo_ease_make(EASE_EMPH, 0.05f, 0.7f, 0.1f, 1);  // emphasized decelerate
+  bt_mid_head = oriole_text_mid(t_title, "Battery");
+  bt_mid_t20 = oriole_text_mid(t20, "On battery");
+  bt_mid_pct = oriole_text_mid(n48, "0123456789");
+  bt_mid_icon = oriole_text_mid(ic24, "");
+  bt_mid_bolt = oriole_text_mid(ic18, "");
+  oriole_ease_make(EASE_EMPH, 0.05f, 0.7f, 0.1f, 1);  // emphasized decelerate
 }
 
 static void battery_enter() {
-  bt_enter_ms = halo_ms();
+  bt_enter_ms = oriole_ms();
 }
 
 static void bt_duration(char *out, int n, uint32_t s) {
@@ -136,32 +136,32 @@ static void bt_duration(char *out, int n, uint32_t s) {
 
 // Text by the middle of its letters at y; align 0 — x is the left edge, 1 — the middle. on — what it lies on (a solid
 // color — edges from a table; nullptr — blended)
-static void bt_text(HaloItem &it, const HaloFont &f, const char *s, float mid, float x, float y, uint32_t color,
-                    int align, const HaloView &v, float alpha = 1, const HaloItem *on = &halo_black) {
-  it.kind = HI_TEXT, it.font = &f, it.text = s, it.align = align, it.color = color, it.on_black = on == &halo_black;
+static void bt_text(OrioleItem &it, const OrioleFont &f, const char *s, float mid, float x, float y, uint32_t color,
+                    int align, const OrioleView &v, float alpha = 1, const OrioleItem *on = &oriole_black) {
+  it.kind = HI_TEXT, it.font = &f, it.text = s, it.align = align, it.color = color, it.on_black = on == &oriole_black;
   it.on = on, it.x = x, it.y = y + (f.line / 2.0f - mid), it.scale = 1, it.alpha = alpha, it.spacing = 0;
-  halo_view_commit(it, v);
+  oriole_view_commit(it, v);
 }
 
-static void bt_rect(HaloItem &it, float x0, float y0, float x1, float y1, float r, uint32_t color, float alpha,
-                    const HaloView &v) {
+static void bt_rect(OrioleItem &it, float x0, float y0, float x1, float y1, float r, uint32_t color, float alpha,
+                    const OrioleView &v) {
   it.kind = HI_RRECT, it.x = (x0 + x1) / 2, it.y = (y0 + y1) / 2, it.w = x1 - x0, it.h = y1 - y0, it.r = r;
   it.scale = 1, it.color = color, it.alpha = x1 - x0 > 0.1f && y1 - y0 > 0.1f ? alpha : 0, it.on_black = true;
-  halo_view_commit(it, v);
+  oriole_view_commit(it, v);
 }
 
-static void battery_layout(const HaloView &v) {
-  const HaloBattery b = halo_battery();
-  const float t = (halo_ms() - bt_enter_ms) / 1000.0f;
+static void battery_layout(const OrioleView &v) {
+  const OrioleBattery b = oriole_battery();
+  const float t = (oriole_ms() - bt_enter_ms) / 1000.0f;
   const bool has = b.ok && b.present && b.percent >= 0;
   const int pct = has ? b.percent : 0;
   bt_text(bt_head, t_title, "Battery", bt_mid_head, CX, BT_HEAD_Y, TEXT, 1, v);
   // The percent counts up as the screen opens; the battery fills along
-  const float k = halo_ease(EASE_EMPH, t / 0.7f), shown = pct * k;
+  const float k = oriole_ease(EASE_EMPH, t / 0.7f), shown = pct * k;
   if (has) snprintf(bt_pct, sizeof(bt_pct), "%d%%", (int)lroundf(shown));
   else snprintf(bt_pct, sizeof(bt_pct), "--");
   const uint32_t lvl = !has ? DIM : b.usb ? BT_GREEN : pct <= 20 ? BT_RED : TEXT;
-  const float tw = halo_text_width(n48, bt_pct, 0), gw = 54 + 5, x0 = CX - (gw + 16 + tw) / 2, gx = x0 + 27;
+  const float tw = oriole_text_width(n48, bt_pct, 0), gw = 54 + 5, x0 = CX - (gw + 16 + tw) / 2, gx = x0 + 27;
   bt_rect(bt_out, gx - 27, BT_HERO_Y - 15, gx + 27, BT_HERO_Y + 15, 8, 0x8E9099, 1, v);
   bt_rect(bt_in, gx - 24, BT_HERO_Y - 12, gx + 24, BT_HERO_Y + 12, 5.5f, 0x000000, 1, v);
   bt_rect(bt_fill, gx - 21, BT_HERO_Y - 9, gx - 21 + 42 * shown / 100, BT_HERO_Y + 9, 3, lvl, 1, v);
@@ -176,7 +176,7 @@ static void battery_layout(const HaloView &v) {
   else if (b.usb)
     snprintf(bt_status, sizeof(bt_status), pct >= 99 ? "Fully charged" : "On USB, not charging"),
         snprintf(bt_detail, sizeof(bt_detail), "%.2f V", b.mv / 1000.0f);
-  else if (bh.unplug && (bh_demo || halo_clock_valid())) {
+  else if (bh.unplug && (bh_demo || oriole_clock_valid())) {
     bt_duration(dur, sizeof(dur), (uint32_t)time(nullptr) - bh.unplug);
     snprintf(bt_status, sizeof(bt_status), "On battery for %s", dur);
     snprintf(bt_detail, sizeof(bt_detail), "Used %d%% since unplugged", max(0, bh.unplug_pct - pct));
@@ -221,16 +221,16 @@ static void battery_layout(const HaloView &v) {
   const float bx = best >= 0 ? bt_strip[best].x : CX, show = best >= 0 && best_w >= 20 ? k : 0;
   bt_sbolt_bg.kind = HI_CIRCLE, bt_sbolt_bg.x = bx, bt_sbolt_bg.y = BT_STRIP_Y, bt_sbolt_bg.r = 11, bt_sbolt_bg.scale = 1;
   bt_sbolt_bg.color = 0, bt_sbolt_bg.alpha = show, bt_sbolt_bg.on_black = false;
-  halo_view_commit(bt_sbolt_bg, v);
+  oriole_view_commit(bt_sbolt_bg, v);
   bt_text(bt_sbolt, ic18, "", bt_mid_bolt, bx, BT_STRIP_Y, BT_GREEN, 1, v, show, &bt_sbolt_bg);
   for (int i = 0; i < BH_N; i++) {
     const uint8_t s = bh.last ? bh.v[(bh.last - (BH_N - 1 - i)) % BH_N] : 0xFF;
-    const float g = halo_ease(EASE_EMPH, (t - 0.25f * i / (BH_N - 1)) / 0.5f), p = s == 0xFF ? 0 : (s & 0x7F) / 100.0f;
+    const float g = oriole_ease(EASE_EMPH, (t - 0.25f * i / (BH_N - 1)) / 0.5f), p = s == 0xFF ? 0 : (s & 0x7F) / 100.0f;
     const float x = BT_LEFT + i * BT_PITCH + BT_PITCH / 2, h = fmaxf(p * ch * g, s == 0xFF ? 0 : 2 * g);
     bt_rect(bt_bar[i], x - 2, BT_BOT - h, x + 2, BT_BOT, 2, (s & 0x7F) <= 20 ? BT_RED : BT_GREEN, 1, v);
   }
   // Hours under the chart: every 6 hours of local time, with a faint line up through the chart
-  const time_t now = bh_demo || halo_clock_valid() ? time(nullptr) : 0;
+  const time_t now = bh_demo || oriole_clock_valid() ? time(nullptr) : 0;
   const time_t right = (time_t)(bh.last + 1) * BH_SLOT, left = right - BH_N * BH_SLOT;
   struct tm lt;
   localtime_r(&left, &lt);
@@ -251,24 +251,24 @@ static void battery_layout(const HaloView &v) {
   bool any = false;
   for (int i = 0; i < BH_N && !any; i++) any = bh.last && bh.v[i] != 0xFF;
   bt_text(bt_empty, t20, "Collecting data", bt_mid_t20, BT_LEFT + cw / 2, (BT_TOP + BT_BOT) / 2, DIM, 1, v, any ? 0 : 1);
-  if (t < 1.2f) halo_subpixel = true;  // bars growing
+  if (t < 1.2f) oriole_subpixel = true;  // bars growing
 }
 
 static void battery_draw() {
-  halo_item_draw(bt_head);
-  halo_item_draw(bt_out), halo_item_draw(bt_in), halo_item_draw(bt_fill), halo_item_draw(bt_nub);
-  halo_item_draw(bt_bolt), halo_item_draw(bt_pct_t), halo_item_draw(bt_status_t), halo_item_draw(bt_detail_t);
-  halo_item_draw(bt_cap);
-  for (auto &it : bt_shade) halo_item_draw(it);
-  for (auto &it : bt_grid) halo_item_draw(it);
-  for (auto &it : bt_vline) halo_item_draw(it);
-  for (auto &it : bt_bar) halo_item_draw(it);
-  for (auto &it : bt_ylab) halo_item_draw(it);
-  for (auto &it : bt_strip) halo_item_draw(it);
-  halo_item_draw(bt_sbolt_bg), halo_item_draw(bt_sbolt);
-  for (auto &it : bt_hour) halo_item_draw(it);
-  halo_item_draw(bt_empty);
+  oriole_item_draw(bt_head);
+  oriole_item_draw(bt_out), oriole_item_draw(bt_in), oriole_item_draw(bt_fill), oriole_item_draw(bt_nub);
+  oriole_item_draw(bt_bolt), oriole_item_draw(bt_pct_t), oriole_item_draw(bt_status_t), oriole_item_draw(bt_detail_t);
+  oriole_item_draw(bt_cap);
+  for (auto &it : bt_shade) oriole_item_draw(it);
+  for (auto &it : bt_grid) oriole_item_draw(it);
+  for (auto &it : bt_vline) oriole_item_draw(it);
+  for (auto &it : bt_bar) oriole_item_draw(it);
+  for (auto &it : bt_ylab) oriole_item_draw(it);
+  for (auto &it : bt_strip) oriole_item_draw(it);
+  oriole_item_draw(bt_sbolt_bg), oriole_item_draw(bt_sbolt);
+  for (auto &it : bt_hour) oriole_item_draw(it);
+  oriole_item_draw(bt_empty);
 }
 
 // Static: to the face either way (down from the top or up from the bottom edge)
-static const HaloScreen BATTERY_SCREEN = {battery_enter, nullptr, battery_layout, battery_draw, false, HALO_HOME_BOTH};
+static const OrioleScreen BATTERY_SCREEN = {battery_enter, nullptr, battery_layout, battery_draw, false, ORIOLE_HOME_BOTH};

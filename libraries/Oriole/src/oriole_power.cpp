@@ -1,16 +1,16 @@
-// Sleep and wake-up for Halo: light sleep of the ESP32 — memory and program stay, the board goes on where it
-// stopped, the picture is back in ~20–35 ms — and the motion sensor that can wake it. docs/halo.md, section 12.
+// Sleep and wake-up for Oriole: light sleep of the ESP32 — memory and program stay, the board goes on where it
+// stopped, the picture is back in ~20–35 ms — and the motion sensor that can wake it. docs/oriole.md, section 12.
 //
-// The sketch asks (halo_sleep) inside update; the frame engine calls hp_frame_end() once that frame is on the
+// The sketch asks (oriole_sleep) inside update; the frame engine calls hp_frame_end() once that frame is on the
 // display, and the board sleeps right there. Wake-ups: a touch (CST9217 INT, GPIO11, low), BOOT (GPIO0, low),
-// motion (QMI8658 INT1, GPIO21 — the level opposite to the current one; after halo_motion_begin), a timer. The
-// next update sees halo_woke().
-// On USB power, or while someone holds halo_stay_awake (Wi-Fi), the board only pretends: a really sleeping board
+// motion (QMI8658 INT1, GPIO21 — the level opposite to the current one; after oriole_motion_begin), a timer. The
+// next update sees oriole_woke().
+// On USB power, or while someone holds oriole_stay_awake (Wi-Fi), the board only pretends: a really sleeping board
 // leaves the USB port silent and cannot be flashed. The same wake-ups are then watched once a frame.
 // Time during sleep is counted by the RTC slow clock. The default one, the slow RC oscillator (~140 kHz), ran 0.54 %
 // fast in light sleep (half a minute per hour asleep); the fast RC oscillator / 256 (~70 kHz) — 0.03 %. It is
 // switched over before the first sleep, kept running during sleep and measured against the crystal every 5 minutes.
-#include "halo_internal.h"
+#include "oriole_internal.h"
 
 #include <driver/gpio.h>
 #include <esp_private/esp_clk.h>
@@ -18,8 +18,8 @@
 #include <soc/rtc.h>
 
 // ---------- Motion sensor: wake-on-motion on INT1 (register sequence as SensorLib configWakeOnMotion) ----------
-static HaloI2c imu;
-static int imu_mg = 150;  // the wake-on-motion threshold, mg (halo_motion_data puts it back)
+static OrioleI2c imu;
+static int imu_mg = 150;  // the wake-on-motion threshold, mg (oriole_motion_data puts it back)
 static bool imu_on;
 static volatile uint32_t imu_edges;
 // The board wakes on motion only after lying still: pressing BOOT or putting it down in a hand moves it too. A burst
@@ -41,7 +41,7 @@ static void imu_edge_now() {  // the INT1 flip that woke the board: its interrup
 
 static uint8_t imu_reg(uint8_t r) {
   uint8_t v = 0;
-  halo_i2c_read(imu, r, &v, 1);
+  oriole_i2c_read(imu, r, &v, 1);
   return v;
 }
 
@@ -53,95 +53,67 @@ static bool imu_wait(uint8_t r, uint8_t mask, uint8_t want) {
   return false;
 }
 
-bool halo_motion_begin(int mg) {
-  if (!imu) imu = halo_i2c(0x6B);
+bool oriole_motion_begin(int mg) {
+  if (!imu) imu = oriole_i2c(0x6B);
   const uint8_t who = imu ? imu_reg(0x00) : 0;
   if (who != 0x05) return LOG("motion: QMI8658 not found (who am i 0x%02x)\n", who), false;
-  halo_i2c_write(imu, 0x60, 0xB0);  // reset; done when 0x4D reads 0x80
+  oriole_i2c_write(imu, 0x60, 0xB0);  // reset; done when 0x4D reads 0x80
   if (!imu_wait(0x4D, 0xFF, 0x80)) return LOG("motion: QMI8658 reset failed\n"), false;
-  halo_i2c_write(imu, 0x02, 0x40);                            // CTRL1: address auto-increment, INT pins off
-  halo_i2c_write(imu, 0x08, 0x00);                            // CTRL7: sensors off
-  halo_i2c_write(imu, 0x03, 0x2C);                            // CTRL2: ±8 g, low-power 128 Hz
+  oriole_i2c_write(imu, 0x02, 0x40);                            // CTRL1: address auto-increment, INT pins off
+  oriole_i2c_write(imu, 0x08, 0x00);                            // CTRL7: sensors off
+  oriole_i2c_write(imu, 0x03, 0x2C);                            // CTRL2: ±8 g, low-power 128 Hz
   imu_mg = mg;
-  halo_i2c_write(imu, 0x0B, (uint8_t)constrain(mg, 1, 255));  // CAL1_L: threshold, 1 mg per step
-  halo_i2c_write(imu, 0x0C, 0x80 | 0x20);                     // CAL1_H: INT1 starting high, skip 32 samples
-  halo_i2c_write(imu, 0x0A, 0x08);                            // CTRL9: apply the settings, wait, acknowledge
+  oriole_i2c_write(imu, 0x0B, (uint8_t)constrain(mg, 1, 255));  // CAL1_L: threshold, 1 mg per step
+  oriole_i2c_write(imu, 0x0C, 0x80 | 0x20);                     // CAL1_H: INT1 starting high, skip 32 samples
+  oriole_i2c_write(imu, 0x0A, 0x08);                            // CTRL9: apply the settings, wait, acknowledge
   const bool done = imu_wait(0x2D, 0x80, 0x80);
-  halo_i2c_write(imu, 0x0A, 0x00);
+  oriole_i2c_write(imu, 0x0A, 0x00);
   imu_wait(0x2D, 0x80, 0x00);
-  halo_i2c_write(imu, 0x08, 0x01);       // CTRL7: accelerometer on
-  halo_i2c_write(imu, 0x02, 0x40 | 0x08);  // CTRL1: INT1 output on
+  oriole_i2c_write(imu, 0x08, 0x01);       // CTRL7: accelerometer on
+  oriole_i2c_write(imu, 0x02, 0x40 | 0x08);  // CTRL1: INT1 output on
   if (!imu_on) {
     gpio_config_t io = {};
-    io.pin_bit_mask = 1ull << HALO_PIN_IMU_INT1;
+    io.pin_bit_mask = 1ull << ORIOLE_PIN_IMU_INT1;
     io.mode = GPIO_MODE_INPUT;
     io.pull_up_en = GPIO_PULLUP_ENABLE;
     io.intr_type = GPIO_INTR_ANYEDGE;
     gpio_config(&io);
-    gpio_isr_handler_add((gpio_num_t)HALO_PIN_IMU_INT1, imu_isr, nullptr);
+    gpio_isr_handler_add((gpio_num_t)ORIOLE_PIN_IMU_INT1, imu_isr, nullptr);
     imu_on = true;
   }
   LOG("motion: wake-on-motion %d mg (QMI8658 INT1, GPIO21)%s\n", mg, done ? "" : ", settings NOT confirmed");
   return done;
 }
 
-uint32_t halo_motion_count() {
+uint32_t oriole_motion_count() {
   return imu_edges;
 }
 
-static bool imu_cmd(uint8_t cmd) {  // CTRL9 command with the handshake (as in halo_motion_begin)
-  halo_i2c_write(imu, 0x0A, cmd);
+static bool imu_cmd(uint8_t cmd) {  // CTRL9 command with the handshake (as in oriole_motion_begin)
+  oriole_i2c_write(imu, 0x0A, cmd);
   const bool done = imu_wait(0x2D, 0x80, 0x80);
-  halo_i2c_write(imu, 0x0A, 0x00);
+  oriole_i2c_write(imu, 0x0A, 0x00);
   imu_wait(0x2D, 0x80, 0x00);
   return done;
 }
 
 // ---------- Tilt: the accelerometer now, in g (±8 g range: 4096 per g); I2C — not from the frame task ----------
-// In wake-on-motion the chip leaves its data registers at zero (the pedometer still counts): halo_motion_data(true)
-// turns wake-on-motion off for as long as someone reads the tilt, (false) back on — no reset, the steps stay
-bool halo_motion_data(bool on) {
+// In wake-on-motion the chip leaves its data registers at zero: oriole_motion_data(true) turns wake-on-motion off
+// for as long as someone reads the tilt, (false) back on
+bool oriole_motion_data(bool on) {
   if (!imu_on) return false;
-  halo_i2c_write(imu, 0x0B, on ? 0 : (uint8_t)constrain(imu_mg, 1, 255));  // CAL1_L: threshold, 0 — off
-  halo_i2c_write(imu, 0x0C, on ? 0 : 0x80 | 0x20);                        // CAL1_H: INT1 starting high, skip 32
+  oriole_i2c_write(imu, 0x0B, on ? 0 : (uint8_t)constrain(imu_mg, 1, 255));  // CAL1_L: threshold, 0 — off
+  oriole_i2c_write(imu, 0x0C, on ? 0 : 0x80 | 0x20);                        // CAL1_H: INT1 starting high, skip 32
   return imu_cmd(0x08);
 }
 
 // ---------- (the reading)  (±8 g range: 4096 per g); I2C — not from the frame task ----------
-bool halo_accel(float *x, float *y, float *z) {
+bool oriole_accel(float *x, float *y, float *z) {
   uint8_t b[6];
-  if (!imu_on || !halo_i2c_read(imu, 0x35, b, 6)) return false;  // AX_L .. AZ_H
+  if (!imu_on || !oriole_i2c_read(imu, 0x35, b, 6)) return false;  // AX_L .. AZ_H
   *x = (int16_t)(b[0] | b[1] << 8) / 4096.0f, *y = (int16_t)(b[2] | b[3] << 8) / 4096.0f;
   *z = (int16_t)(b[4] | b[5] << 8) / 4096.0f;
   return true;
-}
-
-// ---------- Steps: the QMI8658's own pedometer (it counts while the board sleeps) ----------
-// Parameters as SensorLib's configPedometer example, in samples scaled from 62.5 Hz to our 128 Hz: two pages of
-// CAL1..CAL4 sent with CTRL9 command 0x0D; its interrupt goes to INT2 (not wired), INT1 stays wake-on-motion
-
-bool halo_steps_begin() {
-  if (!imu_on) return false;
-  const uint8_t p1[8] = {0x00, 0x01, 0xCC, 0x00, 0x66, 0x00, 0x02, 0x01};  // sample_cnt 256, peak2peak, peak; page 1
-  const uint8_t p2[8] = {0x90, 0x01, 0x28, 0x0A, 0x00, 0x04, 0x02, 0x02};  // time_up 400, time_low 40, entry 10,
-                                                                          // precision 0, sig_count 4; page 2
-  for (int i = 0; i < 8; i++) halo_i2c_write(imu, 0x0B + i, p1[i]);
-  bool ok = imu_cmd(0x0D);
-  for (int i = 0; i < 8; i++) halo_i2c_write(imu, 0x0B + i, p2[i]);
-  ok &= imu_cmd(0x0D);
-  halo_i2c_write(imu, 0x09, 0x10);  // CTRL8: pedometer on, its interrupt on INT2
-  LOG("steps: pedometer %s\n", ok ? "on" : "settings NOT confirmed");
-  return ok;
-}
-
-uint32_t halo_steps() {  // STEP_CNT, 24 bits (0x5A..0x5C); from a task that may wait for I2C (not the frame task)
-  uint8_t b[3] = {0, 0, 0};
-  if (!imu_on || !halo_i2c_read(imu, 0x5A, b, 3)) return 0;
-  return b[0] | b[1] << 8 | (uint32_t)b[2] << 16;
-}
-
-void halo_steps_reset() {
-  if (imu_on) imu_cmd(0x0F);
 }
 
 // ---------- Sleep ----------
@@ -156,28 +128,28 @@ static uint8_t woke;
 static bool clock_ready;
 static uint32_t cal_at_ms;
 
-void halo_sleep(uint32_t ms) {
+void oriole_sleep(uint32_t ms) {
   req_ms = ms, req = true;
 }
 
-uint8_t halo_woke() {
+uint8_t oriole_woke() {
   return woke;
 }
 
-bool halo_asleep() {
+bool oriole_asleep() {
   return asleep;
 }
 
-void halo_sleep_on_usb(bool on) {
+void oriole_sleep_on_usb(bool on) {
   on_usb_ok = on;
 }
 
-void halo_stay_awake(bool hold) {
+void oriole_stay_awake(bool hold) {
   __atomic_add_fetch(&holds, hold ? 1 : -1, __ATOMIC_RELAXED);
 }
 
 static const char *wake_name(uint8_t w) {
-  return w == HALO_WAKE_TOUCH ? "touch" : w == HALO_WAKE_BOOT ? "BOOT" : w == HALO_WAKE_MOTION ? "motion" : "timer";
+  return w == ORIOLE_WAKE_TOUCH ? "touch" : w == ORIOLE_WAKE_BOOT ? "BOOT" : w == ORIOLE_WAKE_MOTION ? "motion" : "timer";
 }
 
 // The slow clock keeps time while asleep: the fast RC oscillator / 256 instead of the slow RC one, re-measured
@@ -196,8 +168,8 @@ static void clock_prepare() {
 }
 
 static bool finger_down() {
-  HaloTouchSample s;
-  return halo_touch_samples(&s, 1) > 0;
+  OrioleTouchSample s;
+  return oriole_touch_samples(&s, 1) > 0;
 }
 
 static bool motion_new() {  // the board was lying still, and then it moved — after it was put to sleep
@@ -208,8 +180,8 @@ static bool motion_new() {  // the board was lying still, and then it moved — 
 static uint8_t sleep_now(uint32_t ms, bool motion) {
   clock_prepare();
   ht_bus_lock();  // the touch task is not in the middle of an I2C transfer
-  const gpio_num_t tp = (gpio_num_t)HALO_PIN_TP_INT, boot = (gpio_num_t)HALO_PIN_BOOT,
-                   mo = (gpio_num_t)HALO_PIN_IMU_INT1;
+  const gpio_num_t tp = (gpio_num_t)ORIOLE_PIN_TP_INT, boot = (gpio_num_t)ORIOLE_PIN_BOOT,
+                   mo = (gpio_num_t)ORIOLE_PIN_IMU_INT1;
   // The pins' own interrupts are off for the sleep. Their wake-up is by level, and so would be their interrupt: a
   // level that stays (INT1 after one motion event, when the board is then held still) fired it again and again —
   // core 1 frozen, the interrupt watchdog rebooted the board, and the level setting, which survives the reboot,
@@ -234,16 +206,16 @@ static uint8_t sleep_now(uint32_t ms, bool motion) {
   gpio_wakeup_disable(boot);
   if (motion) gpio_wakeup_disable(mo), gpio_set_intr_type(mo, GPIO_INTR_ANYEDGE), gpio_intr_enable(mo);
   ht_bus_unlock();
-  uint8_t w = c == ESP_SLEEP_WAKEUP_TIMER                      ? HALO_WAKE_TIMER
-              : !lb                                            ? HALO_WAKE_BOOT
-              : motion && (lm != mo_was || imu_edges != e0) ? HALO_WAKE_MOTION
-                                                               : HALO_WAKE_TOUCH;
-  if (w == HALO_WAKE_MOTION && imu_edges == e0) imu_edge_now();
-  if (w != HALO_WAKE_TIMER) ht_kick();  // the report whose pulse woke the board: its interrupt was off
+  uint8_t w = c == ESP_SLEEP_WAKEUP_TIMER                      ? ORIOLE_WAKE_TIMER
+              : !lb                                            ? ORIOLE_WAKE_BOOT
+              : motion && (lm != mo_was || imu_edges != e0) ? ORIOLE_WAKE_MOTION
+                                                               : ORIOLE_WAKE_TOUCH;
+  if (w == ORIOLE_WAKE_MOTION && imu_edges == e0) imu_edge_now();
+  if (w != ORIOLE_WAKE_TIMER) ht_kick();  // the report whose pulse woke the board: its interrupt was off
   // A finger moves the board too: give the touch task a moment to read a report — a finger there means a touch
-  if (w == HALO_WAKE_MOTION) {
+  if (w == ORIOLE_WAKE_MOTION) {
     vTaskDelay(pdMS_TO_TICKS(4));
-    if (finger_down()) w = HALO_WAKE_TOUCH;
+    if (finger_down()) w = ORIOLE_WAKE_TOUCH;
   }
   return w;
 }
@@ -255,7 +227,7 @@ static uint8_t sleep_real() {
   int quiet = 0;
   for (;;) {
     const int64_t now = esp_timer_get_time(), gone_ms = (now - asleep_at_us) / 1000;
-    if (sleep_ms && gone_ms >= sleep_ms) return HALO_WAKE_TIMER;
+    if (sleep_ms && gone_ms >= sleep_ms) return ORIOLE_WAKE_TIMER;
     uint32_t ms = sleep_ms ? (uint32_t)(sleep_ms - gone_ms) : 0;
     const bool deaf = now < deaf_until;
     if (deaf) {
@@ -263,11 +235,11 @@ static uint8_t sleep_real() {
       ms = ms ? min(ms, d) : d;
     }
     const uint8_t w = sleep_now(ms, imu_on && !deaf);
-    if (w == HALO_WAKE_TIMER && !(sleep_ms && (esp_timer_get_time() - asleep_at_us) / 1000 >= sleep_ms)) {
+    if (w == ORIOLE_WAKE_TIMER && !(sleep_ms && (esp_timer_get_time() - asleep_at_us) / 1000 >= sleep_ms)) {
       quiet++;
       continue;  // the end of a deaf spell, not the sketch's timer
     }
-    if (w == HALO_WAKE_MOTION && !motion_new()) {
+    if (w == ORIOLE_WAKE_MOTION && !motion_new()) {
       deaf_until = esp_timer_get_time() + 300000, quiet++;
       continue;
     }
@@ -286,18 +258,18 @@ void hp_frame_end() {
   if (!asleep) return;
   const int64_t gone_ms = (esp_timer_get_time() - asleep_at_us) / 1000;
   // BOOT and a touch count once released: the press or tap that put the board to sleep is not a wake-up
-  const bool boot_up = gpio_get_level((gpio_num_t)HALO_PIN_BOOT), finger = finger_down();
+  const bool boot_up = gpio_get_level((gpio_num_t)ORIOLE_PIN_BOOT), finger = finger_down();
   if (boot_up) boot_armed = true;
   if (!finger) touch_armed = true;
   uint8_t w = 0;
-  if (sleep_ms && gone_ms >= sleep_ms) w = HALO_WAKE_TIMER;
-  else if (boot_armed && !boot_up) w = HALO_WAKE_BOOT;
-  else if (touch_armed && finger) w = HALO_WAKE_TOUCH;
-  else if (motion_new()) w = HALO_WAKE_MOTION;
+  if (sleep_ms && gone_ms >= sleep_ms) w = ORIOLE_WAKE_TIMER;
+  else if (boot_armed && !boot_up) w = ORIOLE_WAKE_BOOT;
+  else if (touch_armed && finger) w = ORIOLE_WAKE_TOUCH;
+  else if (motion_new()) w = ORIOLE_WAKE_MOTION;
   if (w) {
     LOG("sleep: %.1f s up (USB or held), woke by %s\n", gone_ms / 1000.0f, wake_name(w));
   } else {
-    const HaloBattery b = halo_battery();
+    const OrioleBattery b = oriole_battery();
     const bool usb = !b.ok || b.usb;  // no data yet — as on USB: stay up
     // Really asleep: nobody holds the board up, it is not on USB (or allowed), BOOT and the finger are up
     if (!holds && (!usb || on_usb_ok) && boot_up && !finger) {
@@ -305,11 +277,11 @@ void hp_frame_end() {
       LOG("sleep: %.1f s, woke by %s\n", (esp_timer_get_time() - asleep_at_us) / 1e6f, wake_name(w));
     } else if (usb && !on_usb_ok && !told_usb) {
       told_usb = true;
-      LOG("sleep: on USB power — staying up, waking the same way (halo_sleep_on_usb to really sleep)\n");
+      LOG("sleep: on USB power — staying up, waking the same way (oriole_sleep_on_usb to really sleep)\n");
     }
   }
   if (!w) return;
   asleep = false, woke = w;
-  if (w == HALO_WAKE_TOUCH) hu_swallow_touch();
-  if (w == HALO_WAKE_BOOT) hf_swallow_boot();
+  if (w == ORIOLE_WAKE_TOUCH) hu_swallow_touch();
+  if (w == ORIOLE_WAKE_BOOT) hf_swallow_boot();
 }

@@ -4,7 +4,7 @@ Run from the repo root:  python3 Oriole/assets/gen_icons.py
 Writes assets/wx_big.png (the current-weather icon) and assets/wx_small.png (hourly row) for the Weather screen, the
 other kinds in the same style (assets/wx_sun*.png, wx_cloud*.png, wx_rain*.png), and assets/face_*.png (partly cloudy,
 sunny, cloudy, rain) for the watch face; then
-`python3 tools/halo_assets.py Oriole` turns them into Halo images.
+`python3 tools/oriole_assets.py Oriole` turns them into Oriole images.
 
 Geometry is measured from design/weather_mockup.webp and converted to board pixels (circle 1254 px -> 466 px,
 scale 0.3722): the sun is a circle; the cloud is two circles (the left one is cut by the flat bottom) joined by a
@@ -21,7 +21,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../tools"))
-import halo_assets as ha  # noqa: E402 — the same font rendering as the firmware's assets
+import oriole_assets as ha  # noqa: E402 — the same font rendering as the firmware's assets
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SS = 8  # supersampling
@@ -71,16 +71,16 @@ def save(img, path):
 
 
 def ink_h(img):
-    """Height of what Halo will draw: rows with alpha above 0 after the 4-bit cut (as the image's ext rows)."""
+    """Height of what Oriole will draw: rows with alpha above 0 after the 4-bit cut (as the image's ext rows)."""
     rows = np.nonzero((ha.q4(np.array(img)[..., 3]) > 0).any(1))[0]
     return int(rows.max() - rows.min() + 1) if len(rows) else 0
 
 
 def digit_band(name, ref="14"):
-    """How tall the digits of font NAME (from halo.conf) are on the board, by the flat ones ("1", "4": round digits
+    """How tall the digits of font NAME (from oriole.conf) are on the board, by the flat ones ("1", "4": round digits
     overshoot a row up and down, as in every font): rows that survive the 4-bit cut — the big temperature's digits
     set the two lines the icon fits in (weather.h, wx_digit_rows — the same reference)."""
-    conf = open(os.path.join(HERE, "halo.conf"), encoding="utf-8").read()
+    conf = open(os.path.join(HERE, "oriole.conf"), encoding="utf-8").read()
     m = re.search(rf"^font\s+{name}\s+(.+)$", conf, re.M)
     parts = shlex.split(m.group(1).split("#")[0])
     path, size = ha.font_path(parts[0]), int(parts[1])
@@ -256,7 +256,7 @@ def face_icon(kind, path):
 
 if __name__ == "__main__":
     # The Weather screen's current icon: every kind exactly as tall as the big temperature's digits (w_now in
-    # halo.conf) — it fits between the lines along their top and bottom (weather.h)
+    # oriole.conf) — it fits between the lines along their top and bottom (weather.h)
     band = digit_band("w_now")
     print(f"w_now digits: {band} px")
     save(fit_height(icon_img, band, BIG_SCALE), os.path.join(HERE, "wx_big.png"))

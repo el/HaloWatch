@@ -1,4 +1,4 @@
-// Звук для Halo: динамик через кодек ES8311 (I2C 0x18 — на шине тача) и усилитель (GPIO46); микрофоны — через
+// Звук для Oriole: динамик через кодек ES8311 (I2C 0x18 — на шине тача) и усилитель (GPIO46); микрофоны — через
 // АЦП ES7210 (I2C 0x40) на той же шине I2S.
 //
 // I2S (драйвер ESP-IDF i2s_std): ESP32 ведёт шину — MCLK = 256·fs на GPIO16, BCLK 9, LRCK 45, данные 8; 16 бит,
@@ -16,9 +16,9 @@
 // The ES7210 is a slave too; in plain I2S mode its SDOUT1 carries ADC1 and ADC2 (MIC1 left, MIC2 right). With
 // MCLK = 256·fs its clock dividers are the same for any rate (Espressif's table: adc_div 1, doubler, DLL, OSR 0x20,
 // LRCK = MCLK/256). Register sequence — Waveshare's es7210.cpp for this board (Apache-2.0). Capturing runs in a task
-// of its own (core 0): halo_mic_on(sink) — the sink gets mono 16-bit blocks of 256 samples, halo_mic_off() — the RX
+// of its own (core 0): oriole_mic_on(sink) — the sink gets mono 16-bit blocks of 256 samples, oriole_mic_off() — the RX
 // channel stops and the ES7210's microphones and ADCs power down.
-#include "halo_internal.h"
+#include "oriole_internal.h"
 
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
@@ -27,7 +27,7 @@
 #define FRAMES 256
 static i2s_chan_handle_t tx, rx;
 static i2c_master_dev_handle_t es, em;  // ES8311, ES7210
-static HaloAudioFill fill_cb;
+static OrioleAudioFill fill_cb;
 static int rate;
 static volatile int volume = 60;
 static volatile bool vol_dirty;
@@ -39,7 +39,7 @@ static bool IRAM_ATTR on_underrun(i2s_chan_handle_t, i2s_event_data_t *, void *)
   return false;
 }
 
-uint32_t halo_audio_underruns() {
+uint32_t oriole_audio_underruns() {
   return underruns;
 }
 
@@ -68,14 +68,14 @@ static void audio_task(void *) {
     const int n = fill_cb ? fill_cb(mono, FRAMES) : 0;
     if (n <= 0) {
       silent += FRAMES;
-      if (pa && silent > rate * 15 / 100) gpio_set_level((gpio_num_t)HALO_PIN_PA, 0), pa = pa_on = false;
+      if (pa && silent > rate * 15 / 100) gpio_set_level((gpio_num_t)ORIOLE_PIN_PA, 0), pa = pa_on = false;
       if (!pa) {  // тихо: DMA сам шлёт нули (auto_clear), задаче — спать
         vTaskDelay(pdMS_TO_TICKS(10));
         continue;
       }
     } else {
       silent = 0;
-      if (!pa) gpio_set_level((gpio_num_t)HALO_PIN_PA, 1), pa = pa_on = true;
+      if (!pa) gpio_set_level((gpio_num_t)ORIOLE_PIN_PA, 1), pa = pa_on = true;
     }
     for (int i = 0; i < FRAMES; i++) st[2 * i] = st[2 * i + 1] = i < n ? mono[i] : 0;
     size_t w = 0;
@@ -83,7 +83,7 @@ static void audio_task(void *) {
   }
 }
 
-bool halo_audio_begin(HaloAudioFill fill, int sample_rate) {
+bool oriole_audio_begin(OrioleAudioFill fill, int sample_rate) {
   if (tx) return true;
   es = ht_i2c_device(0x18);
   if (!es) {
@@ -91,8 +91,8 @@ bool halo_audio_begin(HaloAudioFill fill, int sample_rate) {
     return false;
   }
   rate = sample_rate, fill_cb = fill;
-  gpio_set_direction((gpio_num_t)HALO_PIN_PA, GPIO_MODE_OUTPUT);
-  gpio_set_level((gpio_num_t)HALO_PIN_PA, 0);
+  gpio_set_direction((gpio_num_t)ORIOLE_PIN_PA, GPIO_MODE_OUTPUT);
+  gpio_set_level((gpio_num_t)ORIOLE_PIN_PA, 0);
   // I2S: сначала такты (кодеку нужен MCLK, чтобы принять настройки)
   i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
   cc.dma_desc_num = 6, cc.dma_frame_num = FRAMES, cc.auto_clear = true;
@@ -101,11 +101,11 @@ bool halo_audio_begin(HaloAudioFill fill, int sample_rate) {
   sc.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG((uint32_t)rate);
   sc.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
   sc.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
-  sc.gpio_cfg.mclk = (gpio_num_t)HALO_PIN_MCLK, sc.gpio_cfg.bclk = (gpio_num_t)HALO_PIN_BCLK;
-  sc.gpio_cfg.ws = (gpio_num_t)HALO_PIN_LRCK, sc.gpio_cfg.dout = (gpio_num_t)HALO_PIN_DOUT;
+  sc.gpio_cfg.mclk = (gpio_num_t)ORIOLE_PIN_MCLK, sc.gpio_cfg.bclk = (gpio_num_t)ORIOLE_PIN_BCLK;
+  sc.gpio_cfg.ws = (gpio_num_t)ORIOLE_PIN_LRCK, sc.gpio_cfg.dout = (gpio_num_t)ORIOLE_PIN_DOUT;
   sc.gpio_cfg.din = I2S_GPIO_UNUSED;
   i2s_channel_init_std_mode(tx, &sc);
-  sc.gpio_cfg.dout = I2S_GPIO_UNUSED, sc.gpio_cfg.din = (gpio_num_t)HALO_PIN_DIN;  // the same clocks, the mics' data
+  sc.gpio_cfg.dout = I2S_GPIO_UNUSED, sc.gpio_cfg.din = (gpio_num_t)ORIOLE_PIN_DIN;  // the same clocks, the mics' data
   if (i2s_channel_init_std_mode(rx, &sc) != ESP_OK) i2s_del_channel(rx), rx = nullptr;
   const i2s_event_callbacks_t cb = {nullptr, nullptr, nullptr, on_underrun};
   i2s_channel_register_event_callback(tx, &cb, nullptr);
@@ -124,25 +124,25 @@ bool halo_audio_begin(HaloAudioFill fill, int sample_rate) {
   es_w(0x0D, 0x01), es_w(0x0E, 0x02), es_w(0x12, 0x00), es_w(0x13, 0x10);  // питание: аналог, ЦАП, выход
   es_w(0x1C, 0x6A), es_w(0x37, 0x08);            // без эквалайзеров
   es_w(0x32, vol_reg(volume));
-  xTaskCreatePinnedToCore(audio_task, "halo_audio", 3072, nullptr, 5, nullptr, 0);
+  xTaskCreatePinnedToCore(audio_task, "oriole_audio", 3072, nullptr, 5, nullptr, 0);
   LOG("audio: ES8311 ok, %d Hz\n", rate);
   return true;
 }
 
-void halo_audio_volume(int v) {
+void oriole_audio_volume(int v) {
   volume = constrain(v, 0, 100), vol_dirty = true;
 }
 
-int halo_audio_get_volume() {
+int oriole_audio_get_volume() {
   return volume;
 }
 
-int halo_audio_rate() {
+int oriole_audio_rate() {
   return tx ? rate : 0;
 }
 
 // ---------- Microphones: ES7210 ----------
-static volatile HaloMicSink mic_sink;
+static volatile OrioleMicSink mic_sink;
 static volatile bool mic_want, mic_dirty = true;
 static volatile int mic_gain = 30, mic_ch;
 static TaskHandle_t mic_task_h;
@@ -221,36 +221,36 @@ static void mic_task(void *) {
       const int l = st[2 * i], r = st[2 * i + 1];
       mono[i] = ch == 1 ? l : ch == 2 ? r : (l + r) / 2;
     }
-    const HaloMicSink sink = mic_sink;
+    const OrioleMicSink sink = mic_sink;
     if (sink) sink(mono, n);
   }
 }
 
-bool halo_mic_on(HaloMicSink sink) {
+bool oriole_mic_on(OrioleMicSink sink) {
   if (!tx || !rx) return false;
   if (!em) {
     em = ht_i2c_device(0x40);
     if (!em) return LOG("mic: ES7210 NOT FOUND\n"), false;
   }
   mic_sink = sink, mic_want = true;
-  if (!mic_task_h) xTaskCreatePinnedToCore(mic_task, "halo_mic", 3072, nullptr, 5, &mic_task_h, 0);
+  if (!mic_task_h) xTaskCreatePinnedToCore(mic_task, "oriole_mic", 3072, nullptr, 5, &mic_task_h, 0);
   else xTaskNotifyGive(mic_task_h);
   return true;
 }
 
-void halo_mic_off() {
+void oriole_mic_off() {
   mic_want = false;
   if (mic_task_h) xTaskNotifyGive(mic_task_h);
 }
 
-bool halo_mic_is_on() {
+bool oriole_mic_is_on() {
   return mic_want;
 }
 
-void halo_mic_gain(int db) {
+void oriole_mic_gain(int db) {
   mic_gain = constrain(db, 0, 37), mic_dirty = true;
 }
 
-void halo_mic_channel(int ch) {
+void oriole_mic_channel(int ch) {
   mic_ch = constrain(ch, 0, 2);
 }

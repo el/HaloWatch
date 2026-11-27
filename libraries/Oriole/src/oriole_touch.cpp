@@ -1,4 +1,4 @@
-// Свой драйвер тача CST9217 (I2C 0x5A) для Halo.
+// Свой драйвер тача CST9217 (I2C 0x5A) для Oriole.
 //
 // Пока палец на экране, чип ~60 раз в секунду опускает линию INT (GPIO11) — новый отчёт. Прерывание запоминает
 // время и будит задачу чтения (ядро 0). Отчёт: записать 0xD0 0x00, прочитать 15 байт, подтвердить 0xD0 0x00 0xAB.
@@ -12,7 +12,7 @@
 // держат) и сбрасывает их, записав те же биты. Шина у драйвера i2c_master одна на оба чипа и сама их чередует.
 // Раз в 2 с — батарея: есть ли (0x00, бит 3), USB (0x00 бит 5 и 0x01 бит 3 = 0), заряжается (0x01, биты 6..5 = 1),
 // процент (0xA4 — «топливомер» чипа, включён битом 3 в 0x18), напряжение (0x34/0x35, мВ — АЦП включён битом 0 в 0x30).
-#include "halo_internal.h"
+#include "oriole_internal.h"
 
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
@@ -27,9 +27,9 @@ void ht_bus_lock() {
 void ht_bus_unlock() {
   if (bus_mx) xSemaphoreGive(bus_mx);
 }
-static volatile uint8_t pwr_ev;  // HALO_PWR_* с прошлого halo_pwr_event()
+static volatile uint8_t pwr_ev;  // ORIOLE_PWR_* с прошлого oriole_pwr_event()
 static uint32_t pmu_at, batt_at;
-static HaloBattery batt;
+static OrioleBattery batt;
 static portMUX_TYPE batt_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static uint8_t pmu_reg(uint8_t r) {
@@ -47,7 +47,7 @@ static void battery_poll() {
   if (!pmu || (batt.ok && millis() - batt_at < 2000)) return;
   batt_at = millis();
   const uint8_t s1 = pmu_reg(0x00), s2 = pmu_reg(0x01);
-  HaloBattery b;
+  OrioleBattery b;
   b.ok = true, b.present = s1 & 0x08, b.usb = (s1 & 0x20) && !(s2 & 0x08), b.charging = (s2 >> 5) == 1;
   b.percent = b.present ? (int8_t)min(100, (int)pmu_reg(0xA4)) : -1;
   b.mv = b.present ? (uint16_t)((pmu_reg(0x34) & 0x1F) << 8 | pmu_reg(0x35)) : 0;
@@ -56,9 +56,9 @@ static void battery_poll() {
   portEXIT_CRITICAL(&batt_mux);
 }
 
-HaloBattery halo_battery() {
+OrioleBattery oriole_battery() {
   portENTER_CRITICAL(&batt_mux);
-  const HaloBattery b = batt;
+  const OrioleBattery b = batt;
   portEXIT_CRITICAL(&batt_mux);
   return b;
 }
@@ -66,11 +66,11 @@ static TaskHandle_t task;
 static DRAM_ATTR volatile uint32_t irq_us;
 
 #define HIST 8
-static HaloTouchSample hist[HIST];
+static OrioleTouchSample hist[HIST];
 static int hist_n, hist_head;
 static portMUX_TYPE hist_mux = portMUX_INITIALIZER_UNLOCKED;
 
-int halo_touch_samples(HaloTouchSample *out, int max) {
+int oriole_touch_samples(OrioleTouchSample *out, int max) {
   portENTER_CRITICAL(&hist_mux);
   const int n = min(max, hist_n);
   for (int i = 0; i < n; i++) out[i] = hist[(hist_head - i + HIST) % HIST];
@@ -80,7 +80,7 @@ int halo_touch_samples(HaloTouchSample *out, int max) {
 
 static void IRAM_ATTR tp_isr(void *) {
   irq_us = (uint32_t)esp_timer_get_time();
-  if (halo_trace_on) halo_trace_put(TR_TOUCH, irq_us, 0, 0);
+  if (oriole_trace_on) oriole_trace_put(TR_TOUCH, irq_us, 0, 0);
   BaseType_t woken = pdFALSE;
   if (task) vTaskNotifyGiveFromISR(task, &woken);
   if (woken) portYIELD_FROM_ISR();
@@ -107,12 +107,12 @@ static void pmu_poll() {
   if (i2c_master_transmit_receive(pmu, &reg, 1, &st, 1, 20) != ESP_OK || !(st &= 0x0C)) return;
   const uint8_t clr[2] = {0x49, st};
   i2c_master_transmit(pmu, clr, 2, 20);
-  const uint8_t ev = (st & 0x08 ? HALO_PWR_CLICK : 0) | (st & 0x04 ? HALO_PWR_LONG : 0);
+  const uint8_t ev = (st & 0x08 ? ORIOLE_PWR_CLICK : 0) | (st & 0x04 ? ORIOLE_PWR_LONG : 0);
   __atomic_fetch_or(&pwr_ev, ev, __ATOMIC_RELAXED);
-  LOG("pwr:%s%s\n", ev & HALO_PWR_CLICK ? " click" : "", ev & HALO_PWR_LONG ? " long" : "");
+  LOG("pwr:%s%s\n", ev & ORIOLE_PWR_CLICK ? " click" : "", ev & ORIOLE_PWR_LONG ? " long" : "");
 }
 
-uint8_t halo_pwr_event() {
+uint8_t oriole_pwr_event() {
   return __atomic_exchange_n(&pwr_ev, 0, __ATOMIC_RELAXED);
 }
 
@@ -140,8 +140,8 @@ static void touch_task(void *) {
       release("lift");
       continue;
     }
-    const int x = HALO_W - ((b[1] << 4) | (b[3] >> 4)), y = HALO_H - ((b[2] << 4) | (b[3] & 0x0F));
-    const HaloTouchSample s = {(int16_t)constrain(x, 0, HALO_W - 1), (int16_t)constrain(y, 0, HALO_H - 1), t};
+    const int x = ORIOLE_W - ((b[1] << 4) | (b[3] >> 4)), y = ORIOLE_H - ((b[2] << 4) | (b[3] & 0x0F));
+    const OrioleTouchSample s = {(int16_t)constrain(x, 0, ORIOLE_W - 1), (int16_t)constrain(y, 0, ORIOLE_H - 1), t};
     portENTER_CRITICAL(&hist_mux);
     hist_head = (hist_head + 1) % HIST;
     hist[hist_head] = s;
@@ -153,7 +153,7 @@ static void touch_task(void *) {
   }
 }
 
-void ht_kick() {  // read a report now (its interrupt may have been missed: halo_power.cpp turns it off in sleep)
+void ht_kick() {  // read a report now (its interrupt may have been missed: oriole_power.cpp turns it off in sleep)
   if (task) xTaskNotifyGive(task);
 }
 
@@ -165,11 +165,11 @@ i2c_master_dev_t *ht_i2c_device(uint8_t addr) {
   return i2c_master_bus_add_device(bus, &dc, &h) == ESP_OK ? h : nullptr;
 }
 
-HaloI2c halo_i2c(uint8_t addr) {
+OrioleI2c oriole_i2c(uint8_t addr) {
   return ht_i2c_device(addr);
 }
 
-bool halo_i2c_write(HaloI2c d, uint8_t reg, uint8_t val) {
+bool oriole_i2c_write(OrioleI2c d, uint8_t reg, uint8_t val) {
   const uint8_t w[2] = {reg, val};
   if (!d) return false;
   ht_bus_lock();
@@ -178,7 +178,7 @@ bool halo_i2c_write(HaloI2c d, uint8_t reg, uint8_t val) {
   return ok;
 }
 
-bool halo_i2c_read(HaloI2c d, uint8_t reg, uint8_t *buf, int n) {
+bool oriole_i2c_read(OrioleI2c d, uint8_t reg, uint8_t *buf, int n) {
   if (!d) return false;
   ht_bus_lock();
   const bool ok = i2c_master_transmit_receive(d, &reg, 1, buf, n, 20) == ESP_OK;
@@ -190,8 +190,8 @@ bool ht_begin() {
   bus_mx = xSemaphoreCreateMutex();
   i2c_master_bus_config_t bc = {};
   bc.i2c_port = I2C_NUM_0;
-  bc.sda_io_num = (gpio_num_t)HALO_PIN_SDA;
-  bc.scl_io_num = (gpio_num_t)HALO_PIN_SCL;
+  bc.sda_io_num = (gpio_num_t)ORIOLE_PIN_SDA;
+  bc.scl_io_num = (gpio_num_t)ORIOLE_PIN_SCL;
   bc.clk_source = I2C_CLK_SRC_DEFAULT;
   bc.glitch_ignore_cnt = 7;
   bc.flags.enable_internal_pullup = 1;
@@ -202,10 +202,10 @@ bool ht_begin() {
   dc.scl_speed_hz = 400000;
   if (i2c_master_bus_add_device(bus, &dc, &dev) != ESP_OK) return false;
 
-  gpio_set_direction((gpio_num_t)HALO_PIN_TP_RST, GPIO_MODE_OUTPUT);  // сброс: низкий 10 мс
-  gpio_set_level((gpio_num_t)HALO_PIN_TP_RST, 0);
+  gpio_set_direction((gpio_num_t)ORIOLE_PIN_TP_RST, GPIO_MODE_OUTPUT);  // сброс: низкий 10 мс
+  gpio_set_level((gpio_num_t)ORIOLE_PIN_TP_RST, 0);
   delay(10);
-  gpio_set_level((gpio_num_t)HALO_PIN_TP_RST, 1);
+  gpio_set_level((gpio_num_t)ORIOLE_PIN_TP_RST, 1);
   delay(50);
   const bool found = i2c_master_probe(bus, 0x5A, 50) == ESP_OK;
   // Чип питания: прерывания короткого и долгого нажатия PWR (регистр 0x41, биты 3 и 2), старые флаги — сбросить
@@ -220,24 +220,24 @@ bool ht_begin() {
   } else {
     pmu = nullptr;
   }
-  halo_command("battery", [](const char *) {
-    const HaloBattery b = halo_battery();
+  oriole_command("battery", [](const char *) {
+    const OrioleBattery b = oriole_battery();
     LOG("battery: %s, %d%%, %u mV, usb %s, %s\n", b.present ? "present" : "none", b.percent, b.mv, b.usb ? "yes" : "no",
         b.charging ? "charging" : "not charging");
   });
-  halo_command("pwr", [](const char *a) {  // pwr / pwr long — то же, что нажатие кнопки PWR
-    __atomic_fetch_or(&pwr_ev, strstr(a, "long") ? HALO_PWR_LONG : HALO_PWR_CLICK, __ATOMIC_RELAXED);
+  oriole_command("pwr", [](const char *a) {  // pwr / pwr long — то же, что нажатие кнопки PWR
+    __atomic_fetch_or(&pwr_ev, strstr(a, "long") ? ORIOLE_PWR_LONG : ORIOLE_PWR_CLICK, __ATOMIC_RELAXED);
   });
 
-  xTaskCreatePinnedToCore(touch_task, "halo_touch", 3072, nullptr, 12, &task, 0);
+  xTaskCreatePinnedToCore(touch_task, "oriole_touch", 3072, nullptr, 12, &task, 0);
   gpio_config_t io = {};
-  io.pin_bit_mask = 1ull << HALO_PIN_TP_INT;
+  io.pin_bit_mask = 1ull << ORIOLE_PIN_TP_INT;
   io.mode = GPIO_MODE_INPUT;
   io.pull_up_en = GPIO_PULLUP_ENABLE;
   io.intr_type = GPIO_INTR_NEGEDGE;
   gpio_config(&io);
   gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
-  gpio_isr_handler_add((gpio_num_t)HALO_PIN_TP_INT, tp_isr, nullptr);
+  gpio_isr_handler_add((gpio_num_t)ORIOLE_PIN_TP_INT, tp_isr, nullptr);
   LOG("touch: CST9217 %s, PWR button (AXP2101) %s\n", found ? "ok" : "NOT FOUND", pmu ? "ok" : "NOT FOUND");
   return found;
 }
