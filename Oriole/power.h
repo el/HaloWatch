@@ -110,14 +110,15 @@ static void power_layout() {
   const OrioleView v;
   const int st = face_style();  // the face's style (face.h): dim, no seconds, no rings
   const float dy = fc_dy.target, x = CX + SX[i];
-  const float date_y = st == FS_ANALOG ? 0 : st == FS_STACKED ? fc_st_date_y : FACE_DATE_Y + dy;
-  oriole_roll_layout(r_date, x, date_y + SY[i], fnc(PW_DATE), st == FS_ANALOG ? 0 : fc_date_a.target, &oriole_black, v);
-  oriole_roll_layout(r_time, x, FACE_TIME_Y + dy + SY[i], fnc(PW_TIME), st == FS_ANALOG || st == FS_STACKED ? 0 : 1,
+  const bool an = face_analog(st);
+  const float date_y = an ? 0 : st == FS_STACKED ? fc_st_date_y : FACE_DATE_Y + dy;
+  oriole_roll_layout(r_date, x, date_y + SY[i], fnc(PW_DATE), an ? 0 : fc_date_a.target, &oriole_black, v);
+  oriole_roll_layout(r_time, x, FACE_TIME_Y + dy + SY[i], fnc(PW_TIME), an || st == FS_STACKED ? 0 : 1,
                    &oriole_black, v);
   const float sa = st == FS_STACKED ? 1 : 0;
   oriole_roll_layout(r_hh, x, fc_st_hh_y + SY[i], fnc(PW_TIME), sa, &oriole_black, v);
   oriole_roll_layout(r_mm, x, fc_st_mm_y + SY[i], fnc(PW_DATE), sa, &oriole_black, v);
-  face_hands(x, CX + SY[i], PW_TIME, false, st == FS_ANALOG ? 1 : 0, v);
+  face_hands(x, CX + SY[i], PW_TIME, false, an ? 1 : 0, v);
 }
 
 static void power_draw() {

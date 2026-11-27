@@ -83,7 +83,7 @@ static const CfgField CFG_FIELDS[] = {
     {"wx_every", CF_INT, &cfg.wx_every, 10, 360, false, "30"},
     {"tz", CF_STR, cfg.tz, sizeof(cfg.tz), 0, false, ""},
     {"clock24", CF_BOOL, &cfg.clock24, 0, 0, false, "0"},
-    {"face_style", CF_INT, &cfg.face_style, 0, 5, false, "0"},  // face.h: FACE_STYLE
+    {"face_style", CF_INT, &cfg.face_style, 0, 9, false, "0"},  // face.h: FACE_STYLE
     {"face_color", CF_INT, &cfg.face_color, 0, 4, false, "0"},  // face.h: FACE_COLOR
     {"bt_on", CF_BOOL, &cfg.bt_on, 0, 0, false, "1"},            // ancs.h: iPhone notifications
     {"night", CF_INT, &cfg.night, 0, 3, false, "0"},
